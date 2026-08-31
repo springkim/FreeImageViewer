@@ -1,0 +1,12 @@
+computer01.heif
+computer02.avif
+computer03.gif
+computer04.webp
+computer05.jpg
+computer06.png
+computer07.bmp
+computer08.tiff
+computer09.jxl
+computer10.exr
+computer12.qoi
+computer13.jp2
