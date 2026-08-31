@@ -4,7 +4,7 @@
 // 컨테이너 안의 대표 이미지(primary image)를 디코딩하며,
 // 파일에 기록된 회전/미러/크롭 변환은 libheif 가 적용해 준다.
 //
-#include "heif_decoder.h"
+#include "decoder/heif_decoder.h"
 
 #include <libheif/heif.h>
 

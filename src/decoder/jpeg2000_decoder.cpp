@@ -2,7 +2,7 @@
 // jpeg2000_decoder.cpp
 // OpenJPEG 로 JP2/J2K 이미지를 디코딩하고 8비트 RGBA 로 변환한다.
 //
-#include "jpeg2000_decoder.h"
+#include "decoder/jpeg2000_decoder.h"
 
 #if __has_include(<openjpeg.h>)
 #include <openjpeg.h>

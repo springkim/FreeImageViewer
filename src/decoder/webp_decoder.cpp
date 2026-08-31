@@ -2,7 +2,7 @@
 // webp_decoder.cpp
 // libwebp 로 WebP 를 RGBA 로 디코딩한다.
 //
-#include "webp_decoder.h"
+#include "decoder/webp_decoder.h"
 
 #include <webp/decode.h>
 

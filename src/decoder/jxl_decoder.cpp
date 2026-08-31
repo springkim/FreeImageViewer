@@ -3,7 +3,7 @@
 // libjxl 로 JPEG XL 을 8비트 RGBA 로 디코딩한다.
 // 정적 이미지는 물론, 애니메이션이면 프레임별 지연과 함께 모두 디코딩한다.
 //
-#include "jxl_decoder.h"
+#include "decoder/jxl_decoder.h"
 
 #include <jxl/decode.h>
 #include <jxl/thread_parallel_runner.h>

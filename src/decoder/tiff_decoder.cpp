@@ -3,7 +3,7 @@
 // libtiff 의 고수준 API(TIFFReadRGBAImageOriented)로 TIFF 를 RGBA 로 디코딩한다.
 // 다양한 색공간/비트깊이/압축을 라이브러리가 알아서 8비트 RGBA 로 변환해 준다.
 //
-#include "tiff_decoder.h"
+#include "decoder/tiff_decoder.h"
 
 #include <tiffio.h>
 

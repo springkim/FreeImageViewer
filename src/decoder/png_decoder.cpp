@@ -2,7 +2,7 @@
 // png_decoder.cpp
 // libspng 로 PNG 를 RGBA8 로 디코딩한다.
 //
-#include "png_decoder.h"
+#include "decoder/png_decoder.h"
 
 #include <spng.h>
 

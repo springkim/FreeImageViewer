@@ -3,7 +3,7 @@
 // stb_image(단일 헤더, public domain)로 BMP/TGA 를 8비트 RGBA 로 디코딩한다.
 // (PNM 계열은 ASCII 형식까지 지원하는 자체 구현 pnm_decoder 가 담당)
 //
-#include "stb_decoder.h"
+#include "decoder/stb_decoder.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_BMP

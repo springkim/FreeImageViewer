@@ -2,7 +2,7 @@
 // jpeg_decoder.cpp
 // libjpeg-turbo 의 최신 turbojpeg(tj3_) API 로 JPEG 를 RGBA 로 디코딩한다.
 //
-#include "jpeg_decoder.h"
+#include "decoder/jpeg_decoder.h"
 
 #include <turbojpeg.h>
 

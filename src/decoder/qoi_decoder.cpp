@@ -3,7 +3,7 @@
 // QOI(Quite OK Image) 디코더. 스펙: https://qoiformat.org/qoi-specification.pdf
 // 포맷이 단순해 외부 라이브러리 없이 직접 구현한다.
 //
-#include "qoi_decoder.h"
+#include "decoder/qoi_decoder.h"
 
 #include <cstdio>
 #include <cstring>

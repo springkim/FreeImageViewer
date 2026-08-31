@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(FIV LANGUAGES CXX)
+project(FIV LANGUAGES C CXX)
 
 if (APPLE)
     enable_language(OBJC OBJCXX)
@@ -20,12 +20,17 @@ file(GLOB_RECURSE SRC
         CONFIGURE_DEPENDS
         "${SRC_DIR}/*.cpp"
 )
+set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
+file(GLOB_RECURSE SRC
+        CONFIGURE_DEPENDS
+        "${SRC_DIR}/*.cpp"
+)
 add_executable(${EXE_NAME}
         main.cpp
         ${SRC}
 )
 target_include_directories(${EXE_NAME} PRIVATE
-        "${SRC_DIR}"
+        "${INCLUDE_DIR}"
 )
 # === === === === 3rdparty === === === ===
 set(_3RDPARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty")

@@ -2,21 +2,21 @@
 // image_decoder.cpp
 // 파일 시그니처(매직 바이트)를 보고 포맷별 디코더로 분기한다.
 //
-#include "image_decoder.h"
+#include "decoder/image_decoder.h"
 
-#include "jpeg_decoder.h"
-#include "png_decoder.h"
-#include "webp_decoder.h"
-#include "gif_decoder.h"
-#include "tiff_decoder.h"
-#include "avif_decoder.h"
-#include "qoi_decoder.h"
-#include "jxl_decoder.h"
-#include "jpeg2000_decoder.h"
-#include "stb_decoder.h"
-#include "pnm_decoder.h"
-#include "exr_decoder.h"
-#include "heif_decoder.h"
+#include "decoder/jpeg_decoder.h"
+#include "decoder/png_decoder.h"
+#include "decoder/webp_decoder.h"
+#include "decoder/gif_decoder.h"
+#include "decoder/tiff_decoder.h"
+#include "decoder/avif_decoder.h"
+#include "decoder/qoi_decoder.h"
+#include "decoder/jxl_decoder.h"
+#include "decoder/jpeg2000_decoder.h"
+#include "decoder/stb_decoder.h"
+#include "decoder/pnm_decoder.h"
+#include "decoder/exr_decoder.h"
+#include "decoder/heif_decoder.h"
 
 #include <cctype>
 #include <cstdio>

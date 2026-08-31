@@ -6,7 +6,7 @@
 // EXR 은 선형(linear) HDR 부동소수 값을 담으므로 그대로 8비트로 자르면 어둡게 보인다.
 // 여기서는 [0,1] 로 클램프한 뒤 sRGB 전달함수를 적용해 화면 표시용 8비트로 변환한다.
 //
-#include "exr_decoder.h"
+#include "decoder/exr_decoder.h"
 
 #include <OpenEXR/ImfRgbaFile.h>
 #include <OpenEXR/ImfArray.h>

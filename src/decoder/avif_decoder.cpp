@@ -3,7 +3,7 @@
 // libavif 로 AVIF 를 8비트 RGBA 로 디코딩한다.
 // 정적 이미지는 물론, 이미지 시퀀스(애니메이션)면 프레임별 지연과 함께 모두 디코딩한다.
 //
-#include "avif_decoder.h"
+#include "decoder/avif_decoder.h"
 
 #include <avif/avif.h>
 

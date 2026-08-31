@@ -3,7 +3,7 @@
 // giflib 로 GIF 를 디코딩한다. 애니메이션은 각 프레임을 논리 화면(캔버스) 위에
 // disposal method / 투명 색인 / 인터레이스를 반영해 합성한 뒤 RGBA 스냅샷으로 만든다.
 //
-#include "gif_decoder.h"
+#include "decoder/gif_decoder.h"
 
 #include <gif_lib.h>
 

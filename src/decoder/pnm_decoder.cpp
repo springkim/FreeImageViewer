@@ -3,7 +3,7 @@
 // PNM 계열(PBM/PGM/PPM) 디코더. ASCII(P1/P2/P3)와 바이너리(P4/P5/P6) 모두 지원한다.
 // maxval 65535 까지(16비트 샘플, 빅엔디안) 8비트로 스케일링해 디코딩한다.
 //
-#include "pnm_decoder.h"
+#include "decoder/pnm_decoder.h"
 
 #include <cstdio>
 #include <cstring>
