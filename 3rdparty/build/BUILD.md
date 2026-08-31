@@ -37,3 +37,7 @@
 ```
 brew install nasm
 ```
+
+```
+sudo apt install meson nasm -y
+```

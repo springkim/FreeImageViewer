@@ -39,11 +39,29 @@ endif ()
 
 if (EXISTS "${_3RDPARTY_LIB_DIR}")
     target_link_directories(${EXE_NAME} PRIVATE "${_3RDPARTY_LIB_DIR}")
-    file(GLOB _3rdparty_libs
-            "${_3RDPARTY_LIB_DIR}/*.a" "${_3RDPARTY_LIB_DIR}/*.so" "${_3RDPARTY_LIB_DIR}/*.dylib" "${_3RDPARTY_LIB_DIR}/*.lib")
-    if (_3rdparty_libs)
-        target_link_libraries(${EXE_NAME} PRIVATE ${_3rdparty_libs})
-        target_link_libraries(${EXE_NAME} PRIVATE ${_3rdparty_libs})
+    file(GLOB _3rdparty_static_libs "${_3RDPARTY_LIB_DIR}/*.a")
+    file(GLOB _3rdparty_shared_libs
+            "${_3RDPARTY_LIB_DIR}/*.so" "${_3RDPARTY_LIB_DIR}/*.dylib" "${_3RDPARTY_LIB_DIR}/*.lib")
+
+    # Static archives may have circular or order-dependent dependencies (for
+    # example brotlidec -> brotlicommon).  Ask the linker to rescan the group
+    # instead of relying on the alphabetical order returned by GLOB.
+    if (_3rdparty_static_libs)
+        target_link_libraries(${EXE_NAME} PRIVATE
+                "$<LINK_GROUP:RESCAN,${_3rdparty_static_libs}>")
+    endif ()
+    if (_3rdparty_shared_libs)
+        target_link_libraries(${EXE_NAME} PRIVATE ${_3rdparty_shared_libs})
+    endif ()
+
+    # The bundled x265 archive was built with NUMA support enabled.
+    if (UNIX AND NOT APPLE AND EXISTS "${_3RDPARTY_LIB_DIR}/libx265.a")
+        find_library(NUMA_LIBRARY NAMES numa)
+        if (NOT NUMA_LIBRARY)
+            message(FATAL_ERROR
+                    "The bundled libx265.a requires libnuma (install libnuma-dev).")
+        endif ()
+        target_link_libraries(${EXE_NAME} PRIVATE "${NUMA_LIBRARY}")
     endif ()
 endif ()
 
