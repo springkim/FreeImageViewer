@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
-project(FIV LANGUAGES C CXX)
+project(FIV LANGUAGES CXX)
+
+if (APPLE)
+    enable_language(OBJC OBJCXX)
+elseif (NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
+endif ()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,34 +47,22 @@ endif ()
 
 if (EXISTS "${_3RDPARTY_LIB_DIR}")
     # Only select library formats understood by the active toolchain.  Mixing
-    # Linux .so, macOS .dylib and Windows .lib files makes a shared checkout
+    # Linux .so, macOS .dylib and MinGW .a files makes a shared checkout
     # impossible to configure reliably on more than one platform.
-    if (MSVC)
-        file(GLOB _3rdparty_static_libs CONFIGURE_DEPENDS
-                "${_3RDPARTY_LIB_DIR}/*.lib")
-        set(_3rdparty_shared_libs "")
-    elseif (WIN32)
+    if (WIN32)
         file(GLOB _3rdparty_static_libs CONFIGURE_DEPENDS
                 "${_3RDPARTY_LIB_DIR}/*.a")
-        # Some MinGW builds emit only .lib archives.  Use them as a fallback,
-        # but never mix the two sets because they can contain the same symbols.
-        if (NOT _3rdparty_static_libs)
-            file(GLOB _3rdparty_static_libs CONFIGURE_DEPENDS
-                    "${_3RDPARTY_LIB_DIR}/*.lib")
-        endif ()
         set(_3rdparty_shared_libs "")
     elseif (APPLE)
         file(GLOB _3rdparty_static_libs CONFIGURE_DEPENDS
                 "${_3RDPARTY_LIB_DIR}/*.a")
         file(GLOB _3rdparty_shared_libs CONFIGURE_DEPENDS
                 "${_3RDPARTY_LIB_DIR}/*.dylib")
-    elseif (UNIX)
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         file(GLOB _3rdparty_static_libs CONFIGURE_DEPENDS
                 "${_3RDPARTY_LIB_DIR}/*.a")
         file(GLOB _3rdparty_shared_libs CONFIGURE_DEPENDS
                 "${_3RDPARTY_LIB_DIR}/*.so")
-    else ()
-        message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
     endif ()
 
     # Static archives may have circular or order-dependent dependencies (for
@@ -88,18 +82,14 @@ if (EXISTS "${_3RDPARTY_LIB_DIR}")
                     SPNG_STATIC)
         endif ()
 
-        # GNU/MinGW linkers need an archive group to resolve circular and
-        # order-dependent dependencies such as brotlidec -> brotlicommon.
-        if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED OR
-                CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+        if (APPLE)
+            target_link_libraries(${EXE_NAME} PRIVATE
+                    ${_3rdparty_static_libs})
+        else ()
+            # GNU/MinGW linkers need an archive group to resolve circular and
+            # order-dependent dependencies such as brotlidec -> brotlicommon.
             target_link_libraries(${EXE_NAME} PRIVATE
                     "$<LINK_GROUP:RESCAN,${_3rdparty_static_libs}>")
-        else ()
-            # Apple ld and toolchains without RESCAN get a second pass.  This
-            # preserves normal archive extraction (unlike force-loading every
-            # object, which can create duplicate symbols).
-            target_link_libraries(${EXE_NAME} PRIVATE
-                    ${_3rdparty_static_libs} ${_3rdparty_static_libs})
         endif ()
     endif ()
     if (_3rdparty_shared_libs)
@@ -107,7 +97,8 @@ if (EXISTS "${_3RDPARTY_LIB_DIR}")
     endif ()
 
     # The bundled x265 archive was built with NUMA support enabled.
-    if (UNIX AND NOT APPLE AND EXISTS "${_3RDPARTY_LIB_DIR}/libx265.a")
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+            EXISTS "${_3RDPARTY_LIB_DIR}/libx265.a")
         find_library(NUMA_LIBRARY NAMES numa)
         if (NOT NUMA_LIBRARY)
             message(FATAL_ERROR
