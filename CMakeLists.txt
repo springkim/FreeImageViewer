@@ -60,8 +60,16 @@ if (EXISTS "${_3RDPARTY_LIB_DIR}")
                     SPNG_STATIC)
         endif ()
 
-        target_link_libraries(${EXE_NAME} PRIVATE
-                "$<LINK_GROUP:RESCAN,${_3rdparty_static_libs}>")
+        # GNU/MinGW linkers need an archive group to resolve circular
+        # dependencies.  Apple's linker does not expose CMake's RESCAN group
+        # feature, but it already resolves static archives without that group.
+        if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+            target_link_libraries(${EXE_NAME} PRIVATE
+                    "$<LINK_GROUP:RESCAN,${_3rdparty_static_libs}>")
+        else ()
+            target_link_libraries(${EXE_NAME} PRIVATE
+                    ${_3rdparty_static_libs})
+        endif ()
 
         # Several bundled archives (notably AOM and OpenEXR's IlmThread) were
         # built against winpthreads.  This is not implied by a MinGW C++ link,
