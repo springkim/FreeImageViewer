@@ -12,32 +12,33 @@
 
 
 
-  ### libtiff 빌드 순서:
+### libtiff 빌드 순서:
 
-  perl build_zlib.pl
-  perl build_libjpeg-turbo.pl
-  perl build_libwebp.pl
-  perl build_zstd.pl
-  perl build_libtiff.pl
+perl build_zlib.pl
+perl build_libjpeg-turbo.pl
+perl build_libwebp.pl
+perl build_zstd.pl
+perl build_libtiff.pl
 
-  ### 빌드 전 설정 확인:
+### 빌드 전 설정 확인:
 
-  perl build_libavif.pl --print-config
+perl build_libavif.pl --print-config
 
-  ### OpenEXR 빌드:
+### OpenEXR 빌드:
 
-  perl build_openexr.pl
+perl build_openexr.pl
 
-  ### stb_image 헤더 설치:
+### stb_image 헤더 설치:
 
-  perl build_stb.pl
+perl build_stb.pl
 
 
-
+### MacOS
 ```
 brew install nasm
 ```
 
+### Linux
 ```
 sudo apt install meson nasm -y
 ```

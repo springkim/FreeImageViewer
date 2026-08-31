@@ -47,8 +47,28 @@ if (EXISTS "${_3RDPARTY_LIB_DIR}")
     # example brotlidec -> brotlicommon).  Ask the linker to rescan the group
     # instead of relying on the alphabetical order returned by GLOB.
     if (_3rdparty_static_libs)
+        # The bundled Windows libraries are static archives.  Their public
+        # headers otherwise default to dllimport, which makes MinGW emit
+        # references such as __imp_heif_init that cannot exist in a .a file.
+        if (WIN32)
+            target_compile_definitions(${EXE_NAME} PRIVATE
+                    LIBHEIF_STATIC_BUILD
+                    OPJ_STATIC
+                    JXL_STATIC_DEFINE
+                    JXL_CMS_STATIC_DEFINE
+                    JXL_THREADS_STATIC_DEFINE
+                    SPNG_STATIC)
+        endif ()
+
         target_link_libraries(${EXE_NAME} PRIVATE
                 "$<LINK_GROUP:RESCAN,${_3rdparty_static_libs}>")
+
+        # Several bundled archives (notably AOM and OpenEXR's IlmThread) were
+        # built against winpthreads.  This is not implied by a MinGW C++ link,
+        # especially when the compiler itself uses another thread model.
+        if (MINGW)
+            target_link_libraries(${EXE_NAME} PRIVATE winpthread)
+        endif ()
     endif ()
     if (_3rdparty_shared_libs)
         target_link_libraries(${EXE_NAME} PRIVATE ${_3rdparty_shared_libs})

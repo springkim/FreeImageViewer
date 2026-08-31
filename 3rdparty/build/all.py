@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,33 @@ BUILD_ORDER = (
 )
 
 
+def configure_git_patch():
+    if sys.platform != "win32":
+        return None
+
+    git = shutil.which("git")
+    if git is None:
+        raise RuntimeError("git was not found in PATH.")
+
+    git_path = Path(git).resolve()
+    for directory in (git_path.parent, *git_path.parents):
+        patch = directory / "usr" / "bin" / "patch.exe"
+        if not patch.is_file():
+            continue
+
+        patch_directory = str(patch.parent)
+        path_entries = os.environ.get("PATH", "").split(os.pathsep)
+        path_entries = [
+            entry
+            for entry in path_entries
+            if entry and os.path.normcase(entry) != os.path.normcase(patch_directory)
+        ]
+        os.environ["PATH"] = os.pathsep.join([patch_directory, *path_entries])
+        return patch
+
+    raise RuntimeError(f"Git patch.exe was not found near {git_path}.")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Build every third-party library sequentially."
@@ -47,6 +75,15 @@ def main():
     if perl is None:
         print("[ERROR] perl was not found in PATH.", file=sys.stderr)
         return 1
+
+    try:
+        git_patch = configure_git_patch()
+    except RuntimeError as error:
+        print(f"[ERROR] {error}", file=sys.stderr)
+        return 1
+
+    if git_patch is not None:
+        print(f"[INFO] Using Git patch: {git_patch}", flush=True)
 
     scripts = [
         script_directory / f"build_{library}.pl" for library in BUILD_ORDER

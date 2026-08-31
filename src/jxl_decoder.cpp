@@ -7,12 +7,26 @@
 
 #include <jxl/decode.h>
 #include <jxl/thread_parallel_runner.h>
+#include <hwy/targets.h>
 
 #include <cmath>
 #include <cstdio>
 #include <memory>
 
 namespace {
+    void configure_highway_targets() {
+#if defined(_WIN32) && defined(__GNUC__) && defined(HWY_AVX2)
+        // The bundled MinGW build of libjxl crashes in Highway's AVX2
+        // WriteToOutputStage for otherwise valid images.  Disable only that
+        // runtime target; Highway will select another supported SIMD target.
+        static const bool configured = [] {
+            hwy::DisableTargets(HWY_AVX2);
+            return true;
+        }();
+        (void)configured;
+#endif
+    }
+
     bool read_file(const std::string& path, std::vector<uint8_t>& out) {
         FILE* f = std::fopen(path.c_str(), "rb");
         if (!f) {
@@ -34,6 +48,8 @@ namespace {
 
 DecodedImage decode_jxl(const std::string& path) {
     DecodedImage img;
+
+    configure_highway_targets();
 
     std::vector<uint8_t> data;
     if (!read_file(path, data)) {

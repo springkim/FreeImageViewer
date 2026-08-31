@@ -59,9 +59,10 @@ sub fail {
     die '[ERROR] ', @_, "\n";
 }
 
-sub command_exists {
+sub resolve_command {
     my ($command) = @_;
-    return -f $command if File::Spec->file_name_is_absolute($command);
+    return abs_path($command)
+        if File::Spec->file_name_is_absolute($command) && -f $command;
 
     my @extensions = ('');
     if ($PLATFORM eq 'Windows') {
@@ -72,11 +73,16 @@ sub command_exists {
         for my $extension (@extensions) {
             for my $spelling (lc($extension), uc($extension)) {
                 my $candidate = File::Spec->catfile($directory, $command . $spelling);
-                return 1 if -f $candidate && ($PLATFORM eq 'Windows' || -x $candidate);
+                return abs_path($candidate)
+                    if -f $candidate && ($PLATFORM eq 'Windows' || -x $candidate);
             }
         }
     }
-    return 0;
+    return undef;
+}
+
+sub command_exists {
+    return defined resolve_command(@_);
 }
 
 sub require_commands {
@@ -510,8 +516,18 @@ sub build_libavif {
         "dav1d-$dav1d_version.tar.xz",
     );
     my $dav1d_build = File::Spec->catdir($BUILD_ROOT, 'dav1d-build');
+    my %dav1d_environment = (CC => $CC, CXX => $CXX);
+    if ($PLATFORM eq 'Windows') {
+        $dav1d_environment{CC} = resolve_command($CC)
+            // fail("Cannot resolve compiler path: $CC");
+        $dav1d_environment{CXX} = resolve_command($CXX)
+            // fail("Cannot resolve compiler path: $CXX");
+        $dav1d_environment{AR} = resolve_command('gcc-ar')
+            // resolve_command('ar')
+            // fail('Cannot resolve archiver path: gcc-ar or ar');
+    }
     run_with_env(
-        { CC => $CC, CXX => $CXX },
+        \%dav1d_environment,
         'meson', 'setup', $dav1d_build,
         File::Spec->catdir($BUILD_ROOT, "dav1d-$dav1d_version"),
         "--prefix=$PREFIX", '--libdir=lib', '--default-library=static',
