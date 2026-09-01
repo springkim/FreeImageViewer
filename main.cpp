@@ -5,8 +5,56 @@
 #include <chrono>
 #include <decoder/image_decoder.h>
 #include <ttime.h>
+#include<core/performance.h>
+#include "core/cpu.h"
+
+#include <iostream>
+
+int cpu_info() {
+    const auto cpu = core::get_cpu_info();
+
+    std::cout
+            << "CPU     : "
+            << (cpu.model.empty()
+                    ? "Unknown"
+                    : cpu.model)
+            << '\n';
+
+    std::cout << "Cores   : ";
+
+    if (cpu.cores)
+        std::cout << *cpu.cores;
+    else
+        std::cout << "Unknown";
+
+    std::cout << '\n';
+
+    std::cout << "Threads : ";
+
+    if (cpu.threads)
+        std::cout << *cpu.threads;
+    else
+        std::cout << "Unknown";
+
+    std::cout << '\n';
+
+    if (cpu.p_cores)
+        std::cout
+                << "P-Cores : "
+                << *cpu.p_cores
+                << '\n';
+
+    if (cpu.e_cores)
+        std::cout
+                << "E-Cores : "
+                << *cpu.e_cores
+                << '\n';
+}
 
 int main() {
+    core::use_pcore();
+
+    cpu_info();
     std::ifstream fin;
     fin.open("list.txt");
     //fin.open("/Users/spring/PycharmProjects/ImageDatasetProject/image_list.txt");
