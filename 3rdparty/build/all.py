@@ -13,6 +13,7 @@ from pathlib import Path
 # private dependencies themselves.
 BUILD_ORDER = (
     "stb",
+    "absl",
     "zlib",
     "libjpeg-turbo",
     "libwebp",
@@ -22,6 +23,7 @@ BUILD_ORDER = (
     "libgif",
     "openjpeg",
     "openexr",
+    "resvg",
     "libavif",
     "libheif",
     "libjxl",

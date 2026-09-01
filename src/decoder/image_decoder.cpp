@@ -14,6 +14,10 @@
 #include "decoder/jxl_decoder.h"
 #include "decoder/jpeg2000_decoder.h"
 #include "decoder/stb_decoder.h"
+#include "decoder/psd_decoder.h"
+#include "decoder/ico_decoder.h"
+#include "decoder/tga_decoder.h"
+#include "decoder/svg_decoder.h"
 #include "decoder/pnm_decoder.h"
 #include "decoder/exr_decoder.h"
 #include "decoder/heif_decoder.h"
@@ -88,6 +92,17 @@ namespace {
         return n >= 2 && p[0] == 'B' && p[1] == 'M';
     }
 
+    // Photoshop: signature "8BPS", version 필드는 그 뒤에 온다.
+    bool is_psd(const uint8_t* p, size_t n) {
+        return n >= 4 && std::memcmp(p, "8BPS", 4) == 0;
+    }
+
+    // Windows icon: reserved=0, type=1, image count > 0 (모두 little-endian).
+    bool is_ico(const uint8_t* p, size_t n) {
+        return n >= 6 && p[0] == 0 && p[1] == 0 && p[2] == 1 && p[3] == 0 &&
+               (p[4] != 0 || p[5] != 0);
+    }
+
     // PNM 계열: "P1"~"P6" 다음에 공백 또는 주석('#')
     bool is_pnm(const uint8_t* p, size_t n) {
         if (n < 3 || p[0] != 'P' || p[1] < '1' || p[1] > '6') {
@@ -102,8 +117,7 @@ namespace {
         return n >= 4 && p[0] == 0x76 && p[1] == 0x2F && p[2] == 0x31 && p[3] == 0x01;
     }
 
-    // TGA 는 파일 시그니처가 없어 확장자로 판별한다.
-    bool has_tga_extension(const std::string& path) {
+    bool has_extension(const std::string& path, const char* expected) {
         const size_t dot = path.find_last_of('.');
         if (dot == std::string::npos) {
             return false;
@@ -112,7 +126,20 @@ namespace {
         for (char& c : ext) {
             c = (char)std::tolower((unsigned char)c);
         }
-        return ext == "tga";
+        return ext == expected;
+    }
+
+    // SVG는 XML 선언/공백으로 시작할 수 있다. 앞부분의 실제 <svg 루트 태그를 찾는다.
+    bool is_svg(const uint8_t* p, size_t n) {
+        for (size_t i = 0; i + 4 <= n; ++i) {
+            if (p[i] == '<' && p[i + 1] == 's' && p[i + 2] == 'v' && p[i + 3] == 'g') {
+                if (i + 4 == n || std::isspace(static_cast<unsigned char>(p[i + 4])) ||
+                    p[i + 4] == '>' || p[i + 4] == '/') {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // JPEG XL: 원시 코드스트림(FF 0A) 또는 ISOBMFF 컨테이너 시그니처
@@ -167,7 +194,7 @@ namespace {
 } // namespace
 
 DecodedImage decode_image(const std::string& path) {
-    uint8_t magic[32] = {0};
+    uint8_t magic[512] = {0};
     const size_t n = read_magic(path, magic, sizeof(magic));
 
     if (is_png(magic, n)) {
@@ -203,14 +230,23 @@ DecodedImage decode_image(const std::string& path) {
     if (is_bmp(magic, n)) {
         return decode_stb(path);
     }
+    if (is_psd(magic, n)) {
+        return decode_psd(path);
+    }
+    if (is_ico(magic, n)) {
+        return decode_ico(path);
+    }
     if (is_pnm(magic, n)) {
         return decode_pnm(path);
     }
     if (is_exr(magic, n)) {
         return decode_exr(path);
     }
-    if (has_tga_extension(path)) {   // TGA 는 시그니처가 없어 확장자로 판별
-        return decode_stb(path);
+    if (is_svg(magic, n) || has_extension(path, "svg") || has_extension(path, "svgz")) {
+        return decode_svg(path);
+    }
+    if (has_extension(path, "tga")) {   // TGA 는 고유 시그니처가 없어 확장자로 판별
+        return decode_tga(path);
     }
 
     DecodedImage img;
@@ -218,7 +254,8 @@ DecodedImage decode_image(const std::string& path) {
         img.error = "파일을 열 수 없습니다: " + path;
     } else {
         img.error = "지원하지 않는 이미지 형식입니다"
-                    "(JPEG/PNG/WebP/GIF/TIFF/AVIF/HEIF/QOI/JPEG XL/JPEG 2000/BMP/TGA/PNM/EXR 만 지원): " + path;
+                    "(JPEG/PNG/WebP/GIF/TIFF/AVIF/HEIF/QOI/JPEG XL/JPEG 2000/"
+                    "BMP/PSD/ICO/TGA/SVG/PNM/EXR 만 지원): " + path;
     }
     return img;
 }

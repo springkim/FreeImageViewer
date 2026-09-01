@@ -20,8 +20,14 @@
     * 내부 소스코드 사용
 -[x] **bmp**
     * stb-image
--[ ] tgm
+-[x] **tga**
     * stb-image
+-[x] **psd**
+    * stb-image (합성 이미지)
+-[x] **ico**
+    * ICO 컨테이너 + stb-image
+-[x] **svg**
+    * resvg
 -[x] **jpeg2000**
     * openjpeg
 -[x] **exr**

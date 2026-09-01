@@ -8,5 +8,10 @@ computer07.bmp
 computer08.tiff
 computer09.jxl
 computer10.exr
+computer11.pnm
 computer12.qoi
 computer13.jp2
+computer14.tga
+computer15.psd
+computer16.ico
+computer17.svg
