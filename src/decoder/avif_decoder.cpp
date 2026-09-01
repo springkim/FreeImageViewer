@@ -4,13 +4,14 @@
 // 정적 이미지는 물론, 이미지 시퀀스(애니메이션)면 프레임별 지연과 함께 모두 디코딩한다.
 //
 #include "decoder/avif_decoder.h"
+#include "thread_count.h"
 
 #include <avif/avif.h>
 
 #include <cmath>
 #include <cstring>
 
-DecodedImage decode_avif(const std::string& path) {
+DecodedImage decode_avif(const std::string& path, bool mt) {
     DecodedImage img;
 
     avifDecoder* decoder = avifDecoderCreate();
@@ -18,6 +19,8 @@ DecodedImage decode_avif(const std::string& path) {
         img.error = "avifDecoderCreate 실패";
         return img;
     }
+    const int threadCount = mt ? decoder_detail::available_thread_count() : 1;
+    decoder->maxThreads = threadCount;
 
     avifResult res = avifDecoderSetIOFile(decoder, path.c_str());
     if (res != AVIF_RESULT_OK) {
@@ -49,6 +52,7 @@ DecodedImage decode_avif(const std::string& path) {
         avifRGBImageSetDefaults(&rgb, decoder->image);
         rgb.format = AVIF_RGB_FORMAT_RGBA;
         rgb.depth = 8;
+        rgb.maxThreads = threadCount;
 
         if (avifRGBImageAllocatePixels(&rgb) != AVIF_RESULT_OK) {
             img.error = "AVIF RGB 버퍼 할당 실패";

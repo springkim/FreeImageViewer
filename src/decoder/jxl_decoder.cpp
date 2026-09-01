@@ -46,7 +46,7 @@ namespace {
     }
 } // namespace
 
-DecodedImage decode_jxl(const std::string& path) {
+DecodedImage decode_jxl(const std::string& path, bool mt) {
     DecodedImage img;
 
     configure_highway_targets();
@@ -65,13 +65,15 @@ DecodedImage decode_jxl(const std::string& path) {
         return img;
     }
     auto runner = std::unique_ptr<void, decltype(&JxlThreadParallelRunnerDestroy)>(
-        JxlThreadParallelRunnerCreate(nullptr,
-                                      JxlThreadParallelRunnerDefaultNumWorkerThreads()),
-        JxlThreadParallelRunnerDestroy);
-    if (runner &&
-        JxlDecoderSetParallelRunner(dec.get(), JxlThreadParallelRunner,
-                                    runner.get()) != JXL_DEC_SUCCESS) {
-        runner.reset();   // 러너 설정 실패 시 단일 스레드로 진행
+        nullptr, JxlThreadParallelRunnerDestroy);
+    if (mt) {
+        runner.reset(JxlThreadParallelRunnerCreate(
+            nullptr, JxlThreadParallelRunnerDefaultNumWorkerThreads()));
+        if (runner &&
+            JxlDecoderSetParallelRunner(dec.get(), JxlThreadParallelRunner,
+                                        runner.get()) != JXL_DEC_SUCCESS) {
+            runner.reset();   // 러너 설정 실패 시 단일 스레드로 진행
+        }
     }
 
     if (JxlDecoderSubscribeEvents(dec.get(), JXL_DEC_BASIC_INFO | JXL_DEC_FRAME |

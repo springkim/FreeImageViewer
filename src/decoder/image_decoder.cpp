@@ -193,7 +193,7 @@ namespace {
     }
 } // namespace
 
-DecodedImage decode_image(const std::string& path) {
+DecodedImage decode_image(const std::string& path,bool mt) {
     uint8_t magic[512] = {0};
     const size_t n = read_magic(path, magic, sizeof(magic));
 
@@ -204,10 +204,10 @@ DecodedImage decode_image(const std::string& path) {
         return decode_jpeg(path);
     }
     if (is_jpeg2000(magic, n)) {
-        return decode_jpeg2000(path);
+        return decode_jpeg2000(path, mt);
     }
     if (is_webp(magic, n)) {
-        return decode_webp(path);
+        return decode_webp(path, mt);
     }
     if (is_gif(magic, n)) {
         return decode_gif(path);
@@ -216,16 +216,16 @@ DecodedImage decode_image(const std::string& path) {
         return decode_tiff(path);
     }
     if (is_avif(magic, n)) {   // AVIF 는 HEIF 와 컨테이너가 같으므로 먼저 판별
-        return decode_avif(path);
+        return decode_avif(path, mt);
     }
     if (is_heif(magic, n)) {
-        return decode_heif(path);
+        return decode_heif(path, mt);
     }
     if (is_qoi(magic, n)) {
         return decode_qoi(path);
     }
     if (is_jxl(magic, n)) {
-        return decode_jxl(path);
+        return decode_jxl(path, mt);
     }
     if (is_bmp(magic, n)) {
         return decode_stb(path);
@@ -240,7 +240,7 @@ DecodedImage decode_image(const std::string& path) {
         return decode_pnm(path);
     }
     if (is_exr(magic, n)) {
-        return decode_exr(path);
+        return decode_exr(path, mt);
     }
     if (is_svg(magic, n) || has_extension(path, "svg") || has_extension(path, "svgz")) {
         return decode_svg(path);

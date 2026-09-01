@@ -33,7 +33,9 @@ struct DecodedImage {
 
 // path 의 이미지를 열어 RGBA 로 디코딩한다.
 // 파일 시그니처(매직 바이트)를 보고 포맷을 자동으로 판별한다.
-DecodedImage decode_image(const std::string &path);
+// mt=false 이면 단일 스레드로, mt=true 이면 코덱이 지원하는 범위에서
+// 가용 CPU를 사용하는 멀티스레드로 디코딩한다.
+DecodedImage decode_image(const std::string &path, bool mt=false);
 
 // 빠른 저해상도 미리보기를 디코딩한다(JPEG 만 지원, 그 외/작은 이미지는 ok=false).
 // 즉시 화면에 띄우고, 뒤에서 decode_image() 로 전체 해상도를 받아 교체하는 용도.

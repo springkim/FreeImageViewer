@@ -153,7 +153,7 @@ namespace {
     }
 } // namespace
 
-DecodedImage decode_jpeg2000(const std::string& path) {
+DecodedImage decode_jpeg2000(const std::string& path, bool mt) {
     DecodedImage result;
 
     OPJ_CODEC_FORMAT format = OPJ_CODEC_UNKNOWN;
@@ -191,6 +191,13 @@ DecodedImage decode_jpeg2000(const std::string& path) {
     if (!opj_setup_decoder(codec.get(), &parameters)) {
         result.error = openjpeg_error("OpenJPEG 디코더 설정 실패", messages);
         return result;
+    }
+
+    // Calling this even for the single-thread case overrides OPJ_NUM_THREADS,
+    // so mt=false always decodes on the calling thread.
+    if (opj_has_thread_support()) {
+        const int threadCount = mt ? std::max(opj_get_num_cpus(), 1) : 0;
+        opj_codec_set_threads(codec.get(), threadCount);
     }
 
     opj_image_t* rawImage = nullptr;

@@ -7,4 +7,4 @@
 #include "decoder/image_decoder.h"
 
 // path 의 AVIF 파일을 열어 RGBA 로 디코딩한다.
-DecodedImage decode_avif(const std::string& path);
+DecodedImage decode_avif(const std::string& path, bool mt);

@@ -5,6 +5,7 @@
 // 파일에 기록된 회전/미러/크롭 변환은 libheif 가 적용해 준다.
 //
 #include "decoder/heif_decoder.h"
+#include "thread_count.h"
 
 #include <libheif/heif.h>
 
@@ -21,7 +22,7 @@ namespace {
     }
 } // namespace
 
-DecodedImage decode_heif(const std::string& path) {
+DecodedImage decode_heif(const std::string& path, bool mt) {
     DecodedImage img;
     ensure_heif_init();
 
@@ -30,6 +31,8 @@ DecodedImage decode_heif(const std::string& path) {
         img.error = "heif_context_alloc 실패";
         return img;
     }
+    heif_context_set_max_decoding_threads(
+        ctx, mt ? decoder_detail::available_thread_count() : 0);
 
     heif_error err = heif_context_read_from_file(ctx, path.c_str(), nullptr);
     if (err.code != heif_error_Ok) {

@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+
 #include <decoder/image_decoder.h>
 #include <ttime.h>
 #include <core/performance.h>
@@ -79,15 +80,17 @@ int main() {
         //std::cout << line << '\n';
         image_paths.push_back(line);
     }
-    auto t_beg = ttime();
+    auto t_beg_total = ttime();
     for (auto &image_path: image_paths) {
-        auto img = decode_image(image_path);
+        auto t_beg = ttime();
+        auto img = decode_image(image_path, true);
+        auto t_end = ttime();
         std::cout << image_path << std::endl;
-        std::cout << '\t' << img.width << " x " << img.height << std::endl;
+        std::cout << '\t' << img.width << " x " << img.height << "(" << t_end - t_beg << ")" << std::endl;
     }
-    auto t_end = ttime();
+    auto t_end_total = ttime();
 
-    std::cout << t_end - t_beg << std::endl;
+    std::cout << t_end_total - t_beg_total << std::endl;
 
     return 0;
 }

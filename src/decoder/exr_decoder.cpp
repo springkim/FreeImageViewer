@@ -7,6 +7,7 @@
 // 여기서는 [0,1] 로 클램프한 뒤 sRGB 전달함수를 적용해 화면 표시용 8비트로 변환한다.
 //
 #include "decoder/exr_decoder.h"
+#include "thread_count.h"
 
 #include <OpenEXR/ImfRgbaFile.h>
 #include <OpenEXR/ImfArray.h>
@@ -63,11 +64,12 @@ namespace {
     }
 } // namespace
 
-DecodedImage decode_exr(const std::string& path) {
+DecodedImage decode_exr(const std::string& path, bool mt) {
     DecodedImage img;
 
     try {
-        Imf::RgbaInputFile file(path.c_str());
+        const int threadCount = mt ? decoder_detail::available_thread_count() : 0;
+        Imf::RgbaInputFile file(path.c_str(), threadCount);
 
         const Imath::Box2i dw = file.dataWindow();
         const int64_t W = static_cast<int64_t>(dw.max.x) - dw.min.x + 1;

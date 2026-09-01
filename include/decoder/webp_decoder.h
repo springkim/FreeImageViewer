@@ -6,4 +6,4 @@
 #include "image_decoder.h"
 
 // path 의 WebP 파일을 열어 RGBA 로 디코딩한다.
-DecodedImage decode_webp(const std::string& path);
+DecodedImage decode_webp(const std::string& path, bool mt);

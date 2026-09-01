@@ -6,4 +6,4 @@
 #include "image_decoder.h"
 
 // path 의 JP2 컨테이너 또는 원시 JPEG 2000 코드스트림을 RGBA 로 디코딩한다.
-DecodedImage decode_jpeg2000(const std::string& path);
+DecodedImage decode_jpeg2000(const std::string& path, bool mt);

@@ -6,4 +6,4 @@
 #include "decoder/image_decoder.h"
 
 // path 의 HEIF/HEIC 파일을 열어 RGBA 로 디코딩한다.
-DecodedImage decode_heif(const std::string &path);
+DecodedImage decode_heif(const std::string &path, bool mt);

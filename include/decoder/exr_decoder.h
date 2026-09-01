@@ -7,4 +7,4 @@
 #include "decoder/image_decoder.h"
 
 // path 의 EXR 파일을 열어 RGBA 로 디코딩한다.
-DecodedImage decode_exr(const std::string& path);
+DecodedImage decode_exr(const std::string& path, bool mt);

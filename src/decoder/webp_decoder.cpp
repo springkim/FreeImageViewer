@@ -7,6 +7,7 @@
 #include <webp/decode.h>
 
 #include <cstdio>
+#include <cstring>
 
 namespace {
     // 파일 전체를 메모리로 읽어들인다.
@@ -35,7 +36,7 @@ namespace {
     }
 } // namespace
 
-DecodedImage decode_webp(const std::string& path) {
+DecodedImage decode_webp(const std::string& path, bool mt) {
     DecodedImage img;
 
     std::vector<uint8_t> webp;
@@ -43,26 +44,40 @@ DecodedImage decode_webp(const std::string& path) {
         return img;
     }
 
-    int width = 0;
-    int height = 0;
-
-    // RGBA 로 디코딩 (반환 버퍼는 WebPFree 로 해제해야 함)
-    uint8_t* rgba = WebPDecodeRGBA(webp.data(), webp.size(), &width, &height);
-    if (!rgba) {
-        img.error = "WebP 디코딩 실패(손상되었거나 지원하지 않는 WebP)";
+    WebPDecoderConfig config{};
+    if (!WebPInitDecoderConfig(&config)) {
+        img.error = "WebP 디코더 설정 초기화 실패";
         return img;
     }
+    config.output.colorspace = MODE_RGBA;
+    config.options.use_threads = mt ? 1 : 0;
+
+    const VP8StatusCode status = WebPDecode(webp.data(), webp.size(), &config);
+    if (status != VP8_STATUS_OK) {
+        img.error = "WebP 디코딩 실패(손상되었거나 지원하지 않는 WebP)";
+        WebPFreeDecBuffer(&config.output);
+        return img;
+    }
+    const int width = config.output.width;
+    const int height = config.output.height;
+    const uint8_t* rgba = config.output.u.RGBA.rgba;
+    const int stride = config.output.u.RGBA.stride;
     if (width <= 0 || height <= 0) {
         img.error = "유효하지 않은 이미지 크기입니다";
-        WebPFree(rgba);
+        WebPFreeDecBuffer(&config.output);
         return img;
     }
 
     img.width  = width;
     img.height = height;
-    img.pixels.assign(rgba, rgba + static_cast<size_t>(width) * height * 4);
+    img.pixels.resize(static_cast<size_t>(width) * height * 4);
+    for (int y = 0; y < height; ++y) {
+        std::memcpy(img.pixels.data() + static_cast<size_t>(y) * width * 4,
+                    rgba + static_cast<size_t>(y) * stride,
+                    static_cast<size_t>(width) * 4);
+    }
 
-    WebPFree(rgba);
+    WebPFreeDecBuffer(&config.output);
     img.ok = true;
     return img;
 }
