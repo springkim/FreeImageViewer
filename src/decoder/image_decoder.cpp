@@ -21,11 +21,15 @@
 #include "decoder/pnm_decoder.h"
 #include "decoder/exr_decoder.h"
 #include "decoder/heif_decoder.h"
+#include "decoder/mediainfo.h"
+#include "thread_count.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <thread>
 
 namespace {
     // 파일 앞부분 몇 바이트를 읽는다.
@@ -191,6 +195,171 @@ namespace {
         };
         return ftyp_has_brand(p, n, brands, std::size(brands));
     }
+
+    bool contains_xyb(const std::string& value) {
+        for (size_t i = 0; i + 3 <= value.size(); ++i) {
+            if (std::toupper(static_cast<unsigned char>(value[i])) == 'X' &&
+                std::toupper(static_cast<unsigned char>(value[i + 1])) == 'Y' &&
+                std::toupper(static_cast<unsigned char>(value[i + 2])) == 'B') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool jpeg_has_xyb_icc_profile(const std::string& path) {
+        FILE* file = std::fopen(path.c_str(), "rb");
+        if (!file) {
+            return false;
+        }
+
+        const int soi0 = std::fgetc(file);
+        const int soi1 = std::fgetc(file);
+        if (soi0 != 0xFF || soi1 != 0xD8) {
+            std::fclose(file);
+            return false;
+        }
+
+        bool isXyb = false;
+        while (!isXyb) {
+            int markerPrefix = std::fgetc(file);
+            while (markerPrefix != EOF && markerPrefix != 0xFF) {
+                markerPrefix = std::fgetc(file);
+            }
+            if (markerPrefix == EOF) {
+                break;
+            }
+
+            int marker = std::fgetc(file);
+            while (marker == 0xFF) {
+                marker = std::fgetc(file);
+            }
+            if (marker == EOF || marker == 0xD9 || marker == 0xDA) {
+                break; // EOF, EOI 또는 압축 데이터(SOS) 시작
+            }
+            if (marker == 0x00 || marker == 0x01 ||
+                (marker >= 0xD0 && marker <= 0xD7)) {
+                continue; // byte stuffing, TEM, restart marker
+            }
+
+            const int lengthHigh = std::fgetc(file);
+            const int lengthLow = std::fgetc(file);
+            if (lengthHigh == EOF || lengthLow == EOF) {
+                break;
+            }
+            const size_t segmentLength =
+                (static_cast<size_t>(lengthHigh) << 8) | static_cast<size_t>(lengthLow);
+            if (segmentLength < 2) {
+                break;
+            }
+            const size_t payloadSize = segmentLength - 2;
+
+            if (marker != 0xE2) { // APP2만 ICC 프로파일을 담는다.
+                if (std::fseek(file, static_cast<long>(payloadSize), SEEK_CUR) != 0) {
+                    break;
+                }
+                continue;
+            }
+
+            std::vector<uint8_t> payload(payloadSize);
+            if (std::fread(payload.data(), 1, payload.size(), file) != payload.size()) {
+                break;
+            }
+            static constexpr char iccSignature[] = "ICC_PROFILE";
+            if (payload.size() < 14 ||
+                std::memcmp(payload.data(), iccSignature, sizeof(iccSignature)) != 0) {
+                continue;
+            }
+
+            // APP2의 14바이트 ICC 헤더 뒤가 프로파일 데이터다. jpegli/libjxl이
+            // 만든 XYB 프로파일은 ICC preferred CMM type(bytes 4..7)이 "jxl "이다.
+            const size_t profileOffset = 14;
+            if (payload.size() >= profileOffset + 8 &&
+                std::memcmp(payload.data() + profileOffset + 4, "jxl ", 4) == 0) {
+                isXyb = true;
+                break;
+            }
+
+            // 분할 ICC나 다른 생성기의 프로파일을 위해 ASCII/UTF-16BE 표기도 확인한다.
+            for (size_t i = profileOffset; i + 3 <= payload.size(); ++i) {
+                if (std::toupper(payload[i]) == 'X' &&
+                    std::toupper(payload[i + 1]) == 'Y' &&
+                    std::toupper(payload[i + 2]) == 'B') {
+                    isXyb = true;
+                    break;
+                }
+                if (i + 6 <= payload.size() && payload[i] == 0 && payload[i + 1] == 'X' &&
+                    payload[i + 2] == 0 && payload[i + 3] == 'Y' &&
+                    payload[i + 4] == 0 && payload[i + 5] == 'B') {
+                    isXyb = true;
+                    break;
+                }
+            }
+        }
+
+        std::fclose(file);
+        return isXyb;
+    }
+
+    uint8_t clipped_u8(float value) {
+        if (value <= 0.0f) {
+            return 0;
+        }
+        if (value >= 255.0f) {
+            return 255;
+        }
+        // NumPy의 astype(np.uint8)와 동일하게 소수점 이하는 버린다.
+        return static_cast<uint8_t>(value);
+    }
+
+    void jpegli_xyb_to_rgba(DecodedImage& image, bool mt) {
+        if (!image.ok || image.pixels.size() < 4) {
+            return;
+        }
+
+        const size_t pixelCount = image.pixels.size() / 4;
+        auto transformRange = [&image](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                uint8_t* pixel = image.pixels.data() + i * 4;
+
+                // OpenCV 입력/출력은 BGR 순서지만 DecodedImage는 RGBA 순서다.
+                const float x = static_cast<float>(pixel[2]);
+                const float y = static_cast<float>(pixel[1]);
+                const float b = static_cast<float>(pixel[0]);
+
+                const float outBlue  = 1.78f * x + 0.98f * y - 0.45f * b - 148.5f;
+                const float outGreen = 0.07f * x + 0.98f * y - 0.47f * b + 34.8f;
+                const float outRed   = 0.11f * x + 1.00f * y + 0.87f * b - 91.1f;
+
+                pixel[0] = clipped_u8(outRed);
+                pixel[1] = clipped_u8(outGreen);
+                pixel[2] = clipped_u8(outBlue);
+            }
+        };
+
+        const size_t workerCount = mt
+            ? std::min<size_t>(decoder_detail::available_thread_count(), pixelCount)
+            : 1;
+        if (workerCount <= 1) {
+            transformRange(0, pixelCount);
+            return;
+        }
+
+        const size_t chunkSize = (pixelCount + workerCount - 1) / workerCount;
+        std::vector<std::thread> workers;
+        workers.reserve(workerCount - 1);
+        for (size_t worker = 1; worker < workerCount; ++worker) {
+            const size_t begin = worker * chunkSize;
+            const size_t end = std::min(begin + chunkSize, pixelCount);
+            if (begin < end) {
+                workers.emplace_back(transformRange, begin, end);
+            }
+        }
+        transformRange(0, std::min(chunkSize, pixelCount));
+        for (std::thread& worker : workers) {
+            worker.join();
+        }
+    }
 } // namespace
 
 DecodedImage decode_image(const std::string& path,bool mt) {
@@ -201,7 +370,17 @@ DecodedImage decode_image(const std::string& path,bool mt) {
         return decode_png(path);
     }
     if (is_jpeg(magic, n)) {
-        return decode_jpeg(path);
+        const auto info = get_mediainfo(path);
+        const auto description = info.find("Image.colour_primaries_ICC_Description");
+        const bool isXyb =
+            (description != info.end() && contains_xyb(description->second)) ||
+            jpeg_has_xyb_icc_profile(path);
+
+        DecodedImage result = decode_jpeg(path);
+        if (isXyb) {
+            jpegli_xyb_to_rgba(result, mt);
+        }
+        return result;
     }
     if (is_jpeg2000(magic, n)) {
         return decode_jpeg2000(path, mt);

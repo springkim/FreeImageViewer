@@ -9,6 +9,10 @@
 #include <core/performance.h>
 #include <core/cpu.h>
 #include <core/image_list.h>
+#include <decoder/mediainfo.h>
+#ifdef __APPLE__
+#include <imshow.h>
+#endif
 #include <iostream>
 
 void cpu_info() {
@@ -53,6 +57,15 @@ void cpu_info() {
 }
 
 int main() {
+    // const auto info = get_mediainfo("computer18.jpeg");
+    // for (auto k:info) {
+    //     std::cout << k.first << "\t" << k.second << std::endl;
+    // }
+    // return 0;
+    //
+    //
+
+
     // {
     //     core::use_pcore();
     //     auto t_beg = ttime();
@@ -87,6 +100,7 @@ int main() {
         auto t_end = ttime();
         std::cout << image_path << std::endl;
         std::cout << '\t' << img.width << " x " << img.height << "(" << t_end - t_beg << ")" << std::endl;
+        imshow(image_path.c_str());
     }
     auto t_end_total = ttime();
 

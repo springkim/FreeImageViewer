@@ -620,7 +620,7 @@ sub find_mediainfo_binary {
 }
 
 sub build_mediainfo {
-    my ($version, $zenlib_version) = ('24.11', '0.4.41');
+    my ($version, $zenlib_version) = ('26.05', '0.4.41');
     build_zlib_into_prefix('1.3.2', 'zlib-build');
 
     for my $source (

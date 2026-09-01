@@ -21,10 +21,12 @@ file(GLOB_RECURSE SRC
         "${SRC_DIR}/*.cpp"
 )
 set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
-file(GLOB_RECURSE SRC
-        CONFIGURE_DEPENDS
-        "${SRC_DIR}/*.cpp"
-)
+
+if (APPLE)
+    set(COCOA_GUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gui/cocoa")
+    list(APPEND SRC "${COCOA_GUI_DIR}/imshow.mm")
+endif ()
+
 add_executable(${EXE_NAME}
         main.cpp
         ${SRC}
@@ -32,6 +34,13 @@ add_executable(${EXE_NAME}
 target_include_directories(${EXE_NAME} PRIVATE
         "${INCLUDE_DIR}"
 )
+
+if (APPLE)
+    target_include_directories(${EXE_NAME} PRIVATE "${COCOA_GUI_DIR}")
+    target_compile_options(${EXE_NAME} PRIVATE
+            "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
+    target_link_libraries(${EXE_NAME} PRIVATE "-framework Cocoa")
+endif ()
 # === === === === 3rdparty === === === ===
 set(_3RDPARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty")
 set(_3RDPARTY_INCLUDE_DIR "${_3RDPARTY_DIR}/include")

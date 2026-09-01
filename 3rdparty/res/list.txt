@@ -15,3 +15,4 @@ computer14.tga
 computer15.psd
 computer16.ico
 computer17.svg
+computer18.jpeg
