@@ -41,4 +41,21 @@ brew install nasm
 ### Linux
 ```
 sudo apt install meson nasm -y
+sudo apt install rustup cargo -y
+```
+
+### Windows
+```
+winget install --id Rustlang.Rustup -e
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup default stable-x86_64-pc-windows-gnu
+```
+
+```
+# Windows
+powershell -Command "python all.py 2>&1 | Tee-Object -FilePath compile.txt"
+# Linux
+python all.py 2>&1 | Tee-Object -FilePath compile.txt
+# macOS
+python -u all.py 2>&1 | tee compile.txt
 ```

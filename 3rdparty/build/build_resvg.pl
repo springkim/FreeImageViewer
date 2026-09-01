@@ -214,6 +214,11 @@ sub windows_rust_target {
     fail("Unsupported MinGW target '$machine'; expected x86_64 or i686");
 }
 
+sub compiler_uses_mcfgthread {
+    my $specs = capture($CC, '-dumpspecs') // return 0;
+    return $specs =~ /(?:^|\s)-lmcfgthread(?:\s|$)/m;
+}
+
 sub find_static_library {
     my ($release_dir) = @_;
     for my $filename (qw(libresvg.a resvg.lib)) {
@@ -265,8 +270,8 @@ if ($PLATFORM eq 'Windows') {
     if (rust_host() ne $rust_target) {
         require_commands('rustup');
         run('rustup', 'target', 'add', $rust_target);
+        @target_arguments = ('--target', $rust_target);
     }
-    @target_arguments = ('--target', $rust_target);
 }
 
 print "[BUILD] resvg $VERSION on $PLATFORM\n";
@@ -299,6 +304,9 @@ if ($PLATFORM eq 'Windows') {
     my $rust_flags = $ENV{RUSTFLAGS} // '';
     $rust_flags .= ' ' if $rust_flags ne '';
     $build_environment{RUSTFLAGS} = $rust_flags . '-C target-feature=+crt-static';
+    if (compiler_uses_mcfgthread()) {
+        $build_environment{RUSTFLAGS} .= ' -C link-arg=-lmcfgthread';
+    }
 }
 
 run_in_with_env(

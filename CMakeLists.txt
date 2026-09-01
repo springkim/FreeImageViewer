@@ -125,7 +125,9 @@ endif ()
 
 if (WIN32)
     # Common system dependencies of the bundled image/video codecs.
-    target_link_libraries(${EXE_NAME} PRIVATE bcrypt ws2_32)
+    # userenv must follow libresvg.a because GNU static linking is
+    # order-dependent (Rust std uses GetUserProfileDirectoryW).
+    target_link_libraries(${EXE_NAME} PRIVATE bcrypt ws2_32 userenv)
 endif ()
 
 if (EXISTS "${_3RDPARTY_BIN_DIR}")

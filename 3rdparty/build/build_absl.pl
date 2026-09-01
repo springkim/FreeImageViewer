@@ -15,6 +15,7 @@ $| = 1;
 
 my $PROGRAM = basename($0);
 my $SOURCE_URL = 'https://github.com/abseil/abseil-cpp.git';
+my $SOURCE_TAG = '20260526.0';
 
 my ($PLATFORM, $GENERATOR, $CC, $CXX);
 if ($^O eq 'linux') {
@@ -211,7 +212,7 @@ if (@ARGV) {
     if (@ARGV == 1 && $ARGV[0] eq '--print-config') {
         print "recipe=absl\n";
         print "source=$SOURCE_URL\n";
-        print "branch=default\n";
+        print "branch=$SOURCE_TAG\n";
         print "platform=$PLATFORM\n";
         print "generator=$GENERATOR\n";
         print "cc=$CC\n";
@@ -228,13 +229,16 @@ if (@ARGV) {
 require_commands('cmake', 'git', $CC, $CXX);
 require_commands('mingw32-make') if $PLATFORM eq 'Windows';
 
-print "[BUILD] absl from the default branch on $PLATFORM\n";
+print "[BUILD] absl $SOURCE_TAG on $PLATFORM\n";
 print "[CONFIG] $GENERATOR, $CC/$CXX, C++17, static only, $THREADS parallel jobs\n";
 
 remove_tree($BUILD_ROOT) if -e $BUILD_ROOT;
 make_path($BUILD_ROOT, $PREFIX);
 
-run('git', 'clone', '--depth', '1', $SOURCE_URL, $SOURCE_DIR);
+run(
+    'git', 'clone', '--depth', '1', '--branch', $SOURCE_TAG,
+    $SOURCE_URL, $SOURCE_DIR,
+);
 my $commit = capture('git', '-C', $SOURCE_DIR, 'rev-parse', 'HEAD')
     // fail('Cannot determine the cloned Abseil commit');
 $commit =~ s/\s+\z//;

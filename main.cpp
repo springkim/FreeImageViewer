@@ -85,7 +85,9 @@ int main() {
         std::cout << image_path << std::endl;
         std::cout << '\t' << img.width << " x " << img.height << std::endl;
     }
+    auto t_end = ttime();
 
+    std::cout << t_end - t_beg << std::endl;
 
     return 0;
 }
