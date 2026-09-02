@@ -10,7 +10,7 @@
 #include <core/cpu.h>
 #include <core/image_list.h>
 #include <decoder/mediainfo.h>
-#if defined(__APPLE__) || defined(_WIN32)
+#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__)
 #include <imshow.h>
 #endif
 #include <iostream>

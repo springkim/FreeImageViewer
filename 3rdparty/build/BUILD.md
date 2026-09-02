@@ -42,6 +42,8 @@ brew install nasm
 ```
 sudo apt install meson nasm -y
 sudo apt install rustup cargo -y
+
+sudo apt install libgtk-4-dev pkg-config
 ```
 
 ### Windows
