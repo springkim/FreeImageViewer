@@ -1,10 +1,11 @@
 //
 // webp_decoder.cpp
-// libwebp 로 WebP 를 RGBA 로 디코딩한다.
+// libwebp 로 정적 WebP와 Animated WebP를 RGBA 로 디코딩한다.
 //
 #include "decoder/webp_decoder.h"
 
 #include <webp/decode.h>
+#include <webp/demux.h>
 
 #include <cstdio>
 #include <cstring>
@@ -34,6 +35,66 @@ namespace {
         }
         return true;
     }
+
+    bool decode_animation(const std::vector<uint8_t>& webp, bool mt,
+                          DecodedImage& img) {
+        WebPAnimDecoderOptions options;
+        if (!WebPAnimDecoderOptionsInit(&options)) {
+            img.error = "Animated WebP 디코더 설정 초기화 실패";
+            return false;
+        }
+        options.color_mode = MODE_RGBA;
+        options.use_threads = mt ? 1 : 0;
+
+        const WebPData data = {webp.data(), webp.size()};
+        WebPAnimDecoder* decoder = WebPAnimDecoderNew(&data, &options);
+        if (!decoder) {
+            img.error = "Animated WebP 디코더 생성 실패";
+            return false;
+        }
+
+        WebPAnimInfo info{};
+        if (!WebPAnimDecoderGetInfo(decoder, &info) ||
+            info.canvas_width == 0 || info.canvas_height == 0) {
+            img.error = "Animated WebP 정보를 읽지 못했습니다";
+            WebPAnimDecoderDelete(decoder);
+            return false;
+        }
+
+        img.width = static_cast<int>(info.canvas_width);
+        img.height = static_cast<int>(info.canvas_height);
+        const size_t frameSize = static_cast<size_t>(img.width) * img.height * 4;
+        int previousTimestamp = 0;
+
+        while (WebPAnimDecoderHasMoreFrames(decoder)) {
+            uint8_t* rgba = nullptr;
+            int timestamp = 0;
+            if (!WebPAnimDecoderGetNext(decoder, &rgba, &timestamp) || !rgba ||
+                timestamp < previousTimestamp) {
+                img.error = "Animated WebP 프레임 디코딩 실패";
+                img.frames.clear();
+                WebPAnimDecoderDelete(decoder);
+                return false;
+            }
+
+            ImageFrame frame;
+            frame.pixels.assign(rgba, rgba + frameSize);
+            frame.delay_ms = timestamp - previousTimestamp;
+            img.frames.push_back(std::move(frame));
+            previousTimestamp = timestamp;
+        }
+
+        WebPAnimDecoderDelete(decoder);
+        if (img.frames.size() != info.frame_count || img.frames.empty()) {
+            img.error = "Animated WebP 프레임 수가 올바르지 않습니다";
+            img.frames.clear();
+            return false;
+        }
+
+        img.pixels = img.frames.front().pixels;
+        img.ok = true;
+        return true;
+    }
 } // namespace
 
 DecodedImage decode_webp(const std::string& path, bool mt) {
@@ -41,6 +102,16 @@ DecodedImage decode_webp(const std::string& path, bool mt) {
 
     std::vector<uint8_t> webp;
     if (!read_file(path, webp, img.error)) {
+        return img;
+    }
+
+    WebPBitstreamFeatures features{};
+    if (WebPGetFeatures(webp.data(), webp.size(), &features) != VP8_STATUS_OK) {
+        img.error = "WebP 헤더 파싱 실패";
+        return img;
+    }
+    if (features.has_animation) {
+        decode_animation(webp, mt, img);
         return img;
     }
 

@@ -16,3 +16,7 @@ computer15.psd
 computer16.ico
 computer17.svg
 computer18.jpeg
+computer19.webp
+computer20.jxl
+computer21.avif
+computer22.png
