@@ -25,6 +25,9 @@ set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 if (APPLE)
     set(COCOA_GUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gui/cocoa")
     list(APPEND SRC "${COCOA_GUI_DIR}/imshow.mm")
+elseif (WIN32)
+    set(WIN32_GUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gui/win32")
+    list(APPEND SRC "${WIN32_GUI_DIR}/imshow.cpp")
 endif ()
 
 add_executable(${EXE_NAME}
@@ -40,6 +43,8 @@ if (APPLE)
     target_compile_options(${EXE_NAME} PRIVATE
             "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
     target_link_libraries(${EXE_NAME} PRIVATE "-framework Cocoa")
+elseif (WIN32)
+    target_include_directories(${EXE_NAME} PRIVATE "${WIN32_GUI_DIR}")
 endif ()
 # === === === === 3rdparty === === === ===
 set(_3RDPARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty")
@@ -136,7 +141,7 @@ if (WIN32)
     # Common system dependencies of the bundled image/video codecs.
     # userenv must follow libresvg.a because GNU static linking is
     # order-dependent (Rust std uses GetUserProfileDirectoryW).
-    target_link_libraries(${EXE_NAME} PRIVATE bcrypt ws2_32 userenv)
+    target_link_libraries(${EXE_NAME} PRIVATE bcrypt ws2_32 userenv gdi32 user32)
 endif ()
 
 if (EXISTS "${_3RDPARTY_BIN_DIR}")
