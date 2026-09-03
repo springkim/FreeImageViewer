@@ -367,7 +367,7 @@ DecodedImage decode_image(const std::string& path,bool mt) {
     const size_t n = read_magic(path, magic, sizeof(magic));
 
     if (is_png(magic, n)) {
-        return decode_png(path);
+        return decode_png(path, mt);
     }
     if (is_jpeg(magic, n)) {
         const auto info = get_mediainfo(path);
@@ -389,7 +389,7 @@ DecodedImage decode_image(const std::string& path,bool mt) {
         return decode_webp(path, mt);
     }
     if (is_gif(magic, n)) {
-        return decode_gif(path);
+        return decode_gif(path, mt);
     }
     if (is_tiff(magic, n)) {
         return decode_tiff(path);
@@ -422,7 +422,7 @@ DecodedImage decode_image(const std::string& path,bool mt) {
         return decode_exr(path, mt);
     }
     if (is_svg(magic, n) || has_extension(path, "svg") || has_extension(path, "svgz")) {
-        return decode_svg(path);
+        return decode_svg(path, mt);
     }
     if (has_extension(path, "tga")) {   // TGA 는 고유 시그니처가 없어 확장자로 판별
         return decode_tga(path);

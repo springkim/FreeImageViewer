@@ -175,7 +175,7 @@ void imshow(const char* image_path) {
         throw std::runtime_error("imshow must be called from the main thread");
     }
 
-    const DecodedImage decoded = decode_image(std::string(image_path));
+    const DecodedImage decoded = decode_image(std::string(image_path), true);
     if (!decoded.ok) {
         throw std::runtime_error("imshow: " + decoded.error);
     }

@@ -189,7 +189,7 @@ void imshow(const char* image_path) {
         throw std::invalid_argument("imshow: image_path is empty");
     }
 
-    const DecodedImage decoded = decode_image(std::string(image_path));
+    const DecodedImage decoded = decode_image(std::string(image_path), true);
     if (!decoded.ok) {
         throw std::runtime_error("imshow: " + decoded.error);
     }

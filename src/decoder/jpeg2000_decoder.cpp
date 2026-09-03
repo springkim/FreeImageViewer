@@ -14,13 +14,17 @@
 #error "OpenJPEG header not found"
 #endif
 
+#include "thread_count.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -79,21 +83,6 @@ namespace {
                component.prec > 0 && component.prec <= 32;
     }
 
-    // 출력 픽셀의 reference-grid 좌표에 대응하는 component 샘플을 고른다.
-    int32_t sample_at(const opj_image_comp_t& component,
-                      uint32_t referenceX, uint32_t referenceY) {
-        const uint64_t sampleX =
-            (static_cast<uint64_t>(referenceX) + component.dx - 1) / component.dx;
-        const uint64_t sampleY =
-            (static_cast<uint64_t>(referenceY) + component.dy - 1) / component.dy;
-
-        uint64_t x = sampleX > component.x0 ? sampleX - component.x0 : 0;
-        uint64_t y = sampleY > component.y0 ? sampleY - component.y0 : 0;
-        x = std::min<uint64_t>(x, component.w - 1);
-        y = std::min<uint64_t>(y, component.h - 1);
-        return component.data[y * component.w + x];
-    }
-
     double sample_unit(const opj_image_comp_t& component, int32_t value) {
         if (!component.sgnd) {
             if (component.prec == 32) {
@@ -114,12 +103,6 @@ namespace {
         const int64_t clamped = std::clamp<int64_t>(value, minimum, maximum);
         return static_cast<double>(clamped - minimum) /
                static_cast<double>(maximum - minimum);
-    }
-
-    uint8_t sample_u8(const opj_image_comp_t& component,
-                      uint32_t referenceX, uint32_t referenceY) {
-        return static_cast<uint8_t>(std::lround(
-            sample_unit(component, sample_at(component, referenceX, referenceY)) * 255.0));
     }
 
     // YCbCr 계열의 Cb/Cr 값을 8비트 범위에 대응하는 signed 편차로 바꾼다.
@@ -147,9 +130,165 @@ namespace {
         return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0, 255.0)));
     }
 
+    // component 하나에 대해 픽셀 변환에 필요한 표를 미리 만들어 둔다.
+    //  * 출력 좌표 -> 샘플 좌표 변환은 나눗셈이라 픽셀마다 하면 비싸다.
+    //    행/열 단위로 한 번만 계산해서 표로 들고 있는다.
+    //  * 샘플 값 -> 8비트 변환도 정밀도가 16비트 이하면 룩업 테이블로 대체한다.
+    //    (실제 파일은 대부분 8/12/16비트라 이 경로를 탄다)
+    struct ComponentTable {
+        const int32_t* data = nullptr;
+        const opj_image_comp_t* component = nullptr;
+        std::vector<uint32_t> columnIndex;  // 출력 x -> component 안의 x
+        std::vector<size_t> rowOffset;      // 출력 y -> component 안의 행 시작 오프셋
+        std::vector<uint8_t> toU8;          // 샘플 값 -> 8비트 밝기
+        std::vector<double> toUnit;         // 샘플 값 -> 0..1 정규화 값
+        std::vector<double> toChroma;       // 샘플 값 -> 8비트 색차 편차
+        int32_t minimum = 0;
+        int32_t maximum = 0;
+
+        int32_t raw(size_t x, size_t y) const {
+            return data[rowOffset[y] + columnIndex[x]];
+        }
+
+        size_t lutIndex(int32_t value) const {
+            return static_cast<size_t>(std::clamp(value, minimum, maximum) - minimum);
+        }
+
+        uint8_t u8(size_t x, size_t y) const {
+            const int32_t value = raw(x, y);
+            if (!toU8.empty()) {
+                return toU8[lutIndex(value)];
+            }
+            return static_cast<uint8_t>(
+                std::lround(sample_unit(*component, value) * 255.0));
+        }
+
+        double unit(size_t x, size_t y) const {
+            const int32_t value = raw(x, y);
+            if (!toUnit.empty()) {
+                return toUnit[lutIndex(value)];
+            }
+            return sample_unit(*component, value);
+        }
+
+        double chroma(size_t x, size_t y) const {
+            const int32_t value = raw(x, y);
+            if (!toChroma.empty()) {
+                return toChroma[lutIndex(value)];
+            }
+            return chroma_offset(*component, value);
+        }
+    };
+
+    // 어떤 룩업 테이블이 필요한지.
+    enum class TableKind { U8, Unit, Chroma };
+
+    ComponentTable build_table(const opj_image_comp_t& component,
+                               uint32_t originX, uint32_t originY,
+                               uint32_t width, uint32_t height,
+                               TableKind kind) {
+        ComponentTable table;
+        table.data = component.data;
+        table.component = &component;
+
+        table.columnIndex.resize(width);
+        for (uint32_t x = 0; x < width; ++x) {
+            const uint64_t referenceX = static_cast<uint64_t>(originX) + x;
+            const uint64_t sampleX = (referenceX + component.dx - 1) / component.dx;
+            const uint64_t index = sampleX > component.x0 ? sampleX - component.x0 : 0;
+            table.columnIndex[x] =
+                static_cast<uint32_t>(std::min<uint64_t>(index, component.w - 1));
+        }
+
+        table.rowOffset.resize(height);
+        for (uint32_t y = 0; y < height; ++y) {
+            const uint64_t referenceY = static_cast<uint64_t>(originY) + y;
+            const uint64_t sampleY = (referenceY + component.dy - 1) / component.dy;
+            const uint64_t index = sampleY > component.y0 ? sampleY - component.y0 : 0;
+            table.rowOffset[y] =
+                static_cast<size_t>(std::min<uint64_t>(index, component.h - 1)) *
+                component.w;
+        }
+
+        if (component.prec <= 16) {
+            const size_t entries = size_t{1} << component.prec;
+            if (component.sgnd) {
+                table.minimum = -(int32_t{1} << (component.prec - 1));
+                table.maximum = (int32_t{1} << (component.prec - 1)) - 1;
+            } else {
+                table.minimum = 0;
+                table.maximum = static_cast<int32_t>(entries - 1);
+            }
+            switch (kind) {
+                case TableKind::U8:     table.toU8.resize(entries); break;
+                case TableKind::Unit:   table.toUnit.resize(entries); break;
+                case TableKind::Chroma: table.toChroma.resize(entries); break;
+            }
+            for (size_t i = 0; i < entries; ++i) {
+                const int32_t value = static_cast<int32_t>(i) + table.minimum;
+                switch (kind) {
+                    case TableKind::U8:
+                        table.toU8[i] = static_cast<uint8_t>(
+                            std::lround(sample_unit(component, value) * 255.0));
+                        break;
+                    case TableKind::Unit:
+                        table.toUnit[i] = sample_unit(component, value);
+                        break;
+                    case TableKind::Chroma:
+                        table.toChroma[i] = chroma_offset(component, value);
+                        break;
+                }
+            }
+        }
+        return table;
+    }
+
+    // 서브샘플링이 없고 8비트 unsigned 인 흔한 경우에는 표를 거치지 않고
+    // 원본 샘플을 그대로 복사할 수 있다.
+    bool is_direct_u8(const ComponentTable& table, uint32_t width, uint32_t height) {
+        return table.component->prec == 8 && !table.component->sgnd &&
+               table.component->dx == 1 && table.component->dy == 1 &&
+               table.component->w >= width && table.component->h >= height;
+    }
+
     std::string openjpeg_error(const std::string& operation,
                                const OpenJpegMessages& messages) {
         return messages.error.empty() ? operation : operation + ": " + messages.error;
+    }
+
+    // 행 구간을 워커 스레드로 나눠서 실행한다.
+    void run_by_rows(uint32_t width, uint32_t height, bool mt,
+                     const std::function<void(uint32_t, uint32_t)>& body) {
+        // 스레드 하나가 최소 이만큼은 맡아야 생성 비용이 아깝지 않다.
+        constexpr uint64_t kMinPixelsPerWorker = 128u * 1024u;
+        uint32_t workerCount = 1;
+        if (mt) {
+            const uint64_t pixels = static_cast<uint64_t>(width) * height;
+            workerCount = static_cast<uint32_t>(std::max<uint64_t>(
+                std::min<uint64_t>({pixels / kMinPixelsPerWorker, height,
+                                    static_cast<uint64_t>(
+                                        decoder_detail::available_thread_count())}),
+                1));
+        }
+        if (workerCount <= 1) {
+            body(0, height);
+            return;
+        }
+
+        const uint32_t chunk = (height + workerCount - 1) / workerCount;
+        std::vector<std::thread> workers;
+        workers.reserve(workerCount - 1);
+        for (uint32_t worker = 1; worker < workerCount; ++worker) {
+            const uint32_t begin = std::min(worker * chunk, height);
+            const uint32_t end = std::min(begin + chunk, height);
+            if (begin < end) {
+                workers.emplace_back(body, begin, end);
+            }
+        }
+        body(0, std::min(chunk, height));
+        for (std::thread& worker : workers) {
+            worker.join();
+        }
     }
 } // namespace
 
@@ -286,74 +425,140 @@ DecodedImage decode_jpeg2000(const std::string& path, bool mt) {
         return result;
     }
 
-    result.width = static_cast<int>(width64);
-    result.height = static_cast<int>(height64);
+    const uint32_t width = static_cast<uint32_t>(width64);
+    const uint32_t height = static_cast<uint32_t>(height64);
+    result.width = static_cast<int>(width);
+    result.height = static_cast<int>(height);
     result.pixels.resize(static_cast<size_t>(width64 * height64 * 4));
 
-    const opj_image_comp_t* alpha = alphaIndex >= 0 ? &image->comps[alphaIndex] : nullptr;
-    const bool premultipliedAlpha = alpha && alpha->alpha == 2;
-    for (uint32_t y = 0; y < height64; ++y) {
-        const uint32_t referenceY = image->y0 + y;
-        for (uint32_t x = 0; x < width64; ++x) {
-            const uint32_t referenceX = image->x0 + x;
-            uint8_t red = 0;
-            uint8_t green = 0;
-            uint8_t blue = 0;
+    const bool ycc = colorSpace == OPJ_CLRSPC_SYCC || colorSpace == OPJ_CLRSPC_EYCC;
+    const bool cmyk = colorSpace == OPJ_CLRSPC_CMYK;
+    const bool gray = !ycc && !cmyk &&
+                      (colorSpace == OPJ_CLRSPC_GRAY || colorComponents.size() < 3);
+    const size_t colorTableCount = ycc ? 3 : (cmyk ? 4 : (gray ? 1 : 3));
 
-            if (colorSpace == OPJ_CLRSPC_SYCC || colorSpace == OPJ_CLRSPC_EYCC) {
-                const auto& yComp = image->comps[colorComponents[0]];
-                const auto& cbComp = image->comps[colorComponents[1]];
-                const auto& crComp = image->comps[colorComponents[2]];
-                const double luminance = sample_unit(
-                    yComp, sample_at(yComp, referenceX, referenceY)) * 255.0;
-                const double cb = chroma_offset(
-                    cbComp, sample_at(cbComp, referenceX, referenceY));
-                const double cr = chroma_offset(
-                    crComp, sample_at(crComp, referenceX, referenceY));
-                red = clamp_u8(luminance + 1.402 * cr);
-                green = clamp_u8(luminance - 0.344136 * cb - 0.714136 * cr);
-                blue = clamp_u8(luminance + 1.772 * cb);
-            } else if (colorSpace == OPJ_CLRSPC_CMYK) {
-                const double cyan = sample_unit(image->comps[colorComponents[0]],
-                    sample_at(image->comps[colorComponents[0]], referenceX, referenceY));
-                const double magenta = sample_unit(image->comps[colorComponents[1]],
-                    sample_at(image->comps[colorComponents[1]], referenceX, referenceY));
-                const double yellow = sample_unit(image->comps[colorComponents[2]],
-                    sample_at(image->comps[colorComponents[2]], referenceX, referenceY));
-                const double black = sample_unit(image->comps[colorComponents[3]],
-                    sample_at(image->comps[colorComponents[3]], referenceX, referenceY));
-                red = clamp_u8((1.0 - cyan) * (1.0 - black) * 255.0);
-                green = clamp_u8((1.0 - magenta) * (1.0 - black) * 255.0);
-                blue = clamp_u8((1.0 - yellow) * (1.0 - black) * 255.0);
-            } else if (colorSpace == OPJ_CLRSPC_GRAY || colorComponents.size() < 3) {
-                red = green = blue = sample_u8(
-                    image->comps[colorComponents[0]], referenceX, referenceY);
-            } else {
-                red = sample_u8(image->comps[colorComponents[0]], referenceX, referenceY);
-                green = sample_u8(image->comps[colorComponents[1]], referenceX, referenceY);
-                blue = sample_u8(image->comps[colorComponents[2]], referenceX, referenceY);
-            }
-
-            const uint8_t alphaValue = alpha
-                ? sample_u8(*alpha, referenceX, referenceY)
-                : uint8_t{255};
-            if (premultipliedAlpha) {
-                if (alphaValue == 0) {
-                    red = green = blue = 0;
-                } else {
-                    red = clamp_u8(static_cast<double>(red) * 255.0 / alphaValue);
-                    green = clamp_u8(static_cast<double>(green) * 255.0 / alphaValue);
-                    blue = clamp_u8(static_cast<double>(blue) * 255.0 / alphaValue);
-                }
-            }
-
-            const size_t offset = (static_cast<size_t>(y) * result.width + x) * 4;
-            result.pixels[offset + 0] = red;
-            result.pixels[offset + 1] = green;
-            result.pixels[offset + 2] = blue;
-            result.pixels[offset + 3] = alphaValue;
+    std::vector<ComponentTable> color;
+    color.reserve(colorTableCount);
+    for (size_t i = 0; i < colorTableCount; ++i) {
+        // YCbCr 은 Y 를 반올림 없이 써야 하고 Cb/Cr 은 색차 편차가 필요하다.
+        // CMYK 는 네 성분 모두 0..1 정규화 값으로 섞는다.
+        TableKind kind = TableKind::U8;
+        if (ycc) {
+            kind = i == 0 ? TableKind::Unit : TableKind::Chroma;
+        } else if (cmyk) {
+            kind = TableKind::Unit;
         }
+        color.push_back(build_table(image->comps[colorComponents[i]],
+                                    image->x0, image->y0, width, height, kind));
     }
+
+    ComponentTable alphaTable;
+    const bool hasAlpha = alphaIndex >= 0;
+    if (hasAlpha) {
+        alphaTable = build_table(image->comps[alphaIndex], image->x0, image->y0,
+                                 width, height, TableKind::U8);
+    }
+    const bool premultipliedAlpha = hasAlpha && image->comps[alphaIndex].alpha == 2;
+
+    // 서브샘플링/비트심도 변환이 필요 없는 경우의 빠른 경로.
+    const bool directRgb = !ycc && !cmyk && !gray && !premultipliedAlpha &&
+                           is_direct_u8(color[0], width, height) &&
+                           is_direct_u8(color[1], width, height) &&
+                           is_direct_u8(color[2], width, height) &&
+                           (!hasAlpha || is_direct_u8(alphaTable, width, height));
+    const bool directGray = gray && !premultipliedAlpha &&
+                            is_direct_u8(color[0], width, height) &&
+                            (!hasAlpha || is_direct_u8(alphaTable, width, height));
+
+    auto convertRows = [&](uint32_t beginY, uint32_t endY) {
+        for (uint32_t y = beginY; y < endY; ++y) {
+            uint8_t* out = result.pixels.data() + static_cast<size_t>(y) * width * 4;
+
+            if (directRgb) {
+                const int32_t* r = color[0].data + color[0].rowOffset[y];
+                const int32_t* g = color[1].data + color[1].rowOffset[y];
+                const int32_t* b = color[2].data + color[2].rowOffset[y];
+                const int32_t* a = hasAlpha
+                    ? alphaTable.data + alphaTable.rowOffset[y]
+                    : nullptr;
+                for (uint32_t x = 0; x < width; ++x, out += 4) {
+                    out[0] = static_cast<uint8_t>(std::clamp(r[x], 0, 255));
+                    out[1] = static_cast<uint8_t>(std::clamp(g[x], 0, 255));
+                    out[2] = static_cast<uint8_t>(std::clamp(b[x], 0, 255));
+                    out[3] = a ? static_cast<uint8_t>(std::clamp(a[x], 0, 255))
+                               : uint8_t{255};
+                }
+                continue;
+            }
+
+            if (directGray) {
+                const int32_t* v = color[0].data + color[0].rowOffset[y];
+                const int32_t* a = hasAlpha
+                    ? alphaTable.data + alphaTable.rowOffset[y]
+                    : nullptr;
+                for (uint32_t x = 0; x < width; ++x, out += 4) {
+                    const uint8_t value = static_cast<uint8_t>(std::clamp(v[x], 0, 255));
+                    out[0] = value;
+                    out[1] = value;
+                    out[2] = value;
+                    out[3] = a ? static_cast<uint8_t>(std::clamp(a[x], 0, 255))
+                               : uint8_t{255};
+                }
+                continue;
+            }
+
+            for (uint32_t x = 0; x < width; ++x, out += 4) {
+                uint8_t red = 0;
+                uint8_t green = 0;
+                uint8_t blue = 0;
+
+                if (ycc) {
+                    const double luminance = color[0].unit(x, y) * 255.0;
+                    const double cb = color[1].chroma(x, y);
+                    const double cr = color[2].chroma(x, y);
+                    red = clamp_u8(luminance + 1.402 * cr);
+                    green = clamp_u8(luminance - 0.344136 * cb - 0.714136 * cr);
+                    blue = clamp_u8(luminance + 1.772 * cb);
+                } else if (cmyk) {
+                    const double cyan = color[0].unit(x, y);
+                    const double magenta = color[1].unit(x, y);
+                    const double yellow = color[2].unit(x, y);
+                    const double black = color[3].unit(x, y);
+                    red = clamp_u8((1.0 - cyan) * (1.0 - black) * 255.0);
+                    green = clamp_u8((1.0 - magenta) * (1.0 - black) * 255.0);
+                    blue = clamp_u8((1.0 - yellow) * (1.0 - black) * 255.0);
+                } else if (gray) {
+                    red = green = blue = color[0].u8(x, y);
+                } else {
+                    red = color[0].u8(x, y);
+                    green = color[1].u8(x, y);
+                    blue = color[2].u8(x, y);
+                }
+
+                const uint8_t alphaValue = hasAlpha ? alphaTable.u8(x, y) : uint8_t{255};
+                if (premultipliedAlpha) {
+                    if (alphaValue == 0) {
+                        red = green = blue = 0;
+                    } else {
+                        const unsigned divisor = alphaValue;
+                        red = static_cast<uint8_t>(std::min(
+                            (red * 255U + divisor / 2U) / divisor, 255U));
+                        green = static_cast<uint8_t>(std::min(
+                            (green * 255U + divisor / 2U) / divisor, 255U));
+                        blue = static_cast<uint8_t>(std::min(
+                            (blue * 255U + divisor / 2U) / divisor, 255U));
+                    }
+                }
+
+                out[0] = red;
+                out[1] = green;
+                out[2] = blue;
+                out[3] = alphaValue;
+            }
+        }
+    };
+
+    run_by_rows(width, height, mt, convertRows);
 
     result.ok = true;
     return result;

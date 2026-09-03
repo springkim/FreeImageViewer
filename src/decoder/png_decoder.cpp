@@ -4,15 +4,20 @@
 // 압축 데이터를 독립 PNG로 재구성해 libspng로 푼 뒤 캔버스에 합성한다.
 //
 #include "decoder/png_decoder.h"
+#include "thread_count.h"
 
 #include <spng.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -31,9 +36,22 @@ namespace {
         uint8_t blendOp = 0;
     };
 
+    struct ByteSpan {
+        size_t offset = 0;
+        size_t size = 0;
+    };
+
     struct ApngFrame {
         ApngFrameControl control;
-        std::vector<std::vector<uint8_t>> compressedData;
+        std::vector<ByteSpan> compressedData;
+        size_t compressedSize = 0;
+    };
+
+    struct DecodedApngFrame {
+        int width = 0;
+        int height = 0;
+        std::vector<uint8_t> pixels;
+        std::string error;
     };
 
     uint16_t read_be16(const uint8_t* data) {
@@ -55,27 +73,56 @@ namespace {
         out.push_back(static_cast<uint8_t>(value));
     }
 
-    uint32_t png_crc32(const uint8_t* data, size_t size) {
-        uint32_t crc = 0xffffffffu;
-        for (size_t i = 0; i < size; ++i) {
-            crc ^= data[i];
+    constexpr std::array<uint32_t, 256> make_crc_table() {
+        std::array<uint32_t, 256> table{};
+        for (uint32_t value = 0; value < table.size(); ++value) {
+            uint32_t crc = value;
             for (int bit = 0; bit < 8; ++bit) {
                 const uint32_t mask = 0u - (crc & 1u);
                 crc = (crc >> 1) ^ (0xedb88320u & mask);
             }
+            table[value] = crc;
         }
-        return crc ^ 0xffffffffu;
+        return table;
+    }
+
+    constexpr auto crcTable = make_crc_table();
+
+    uint32_t update_png_crc32(uint32_t crc, const uint8_t* data, size_t size) {
+        for (size_t i = 0; i < size; ++i) {
+            crc = crcTable[(crc ^ data[i]) & 0xffu] ^ (crc >> 8);
+        }
+        return crc;
     }
 
     void append_chunk(std::vector<uint8_t>& png, const char type[4],
                       const uint8_t* data, size_t size) {
         append_be32(png, static_cast<uint32_t>(size));
-        const size_t crcBegin = png.size();
         png.insert(png.end(), type, type + 4);
         if (size > 0) {
             png.insert(png.end(), data, data + size);
         }
-        append_be32(png, png_crc32(png.data() + crcBegin, size + 4));
+        uint32_t crc = update_png_crc32(0xffffffffu,
+                                        reinterpret_cast<const uint8_t*>(type), 4);
+        crc = update_png_crc32(crc, data, size);
+        append_be32(png, crc ^ 0xffffffffu);
+    }
+
+    void append_frame_data_chunk(std::vector<uint8_t>& out,
+                                 const std::vector<uint8_t>& source,
+                                 const ApngFrame& frame) {
+        append_be32(out, static_cast<uint32_t>(frame.compressedSize));
+        static constexpr char idat[] = "IDAT";
+        out.insert(out.end(), idat, idat + 4);
+
+        uint32_t crc = update_png_crc32(
+            0xffffffffu, reinterpret_cast<const uint8_t*>(idat), 4);
+        for (const ByteSpan& span : frame.compressedData) {
+            const uint8_t* data = source.data() + span.offset;
+            out.insert(out.end(), data, data + span.size);
+            crc = update_png_crc32(crc, data, span.size);
+        }
+        append_be32(out, crc ^ 0xffffffffu);
     }
 
     bool read_file(const std::string& path, std::vector<uint8_t>& out,
@@ -156,7 +203,8 @@ namespace {
     }
 
     bool parse_apng(const std::vector<uint8_t>& png, std::array<uint8_t, 13>& ihdr,
-                    std::vector<std::vector<uint8_t>>& sharedChunks,
+                    std::vector<ByteSpan>& sharedChunks,
+                    size_t& sharedChunkSize,
                     std::vector<ApngFrame>& frames, uint32_t& declaredFrameCount,
                     std::string& error) {
         if (png.size() < pngSignature.size() ||
@@ -214,7 +262,9 @@ namespace {
                 seenImageData = true;
                 // fcTL이 IDAT보다 먼저 나온 경우 기본 이미지는 애니메이션의 첫 프레임이다.
                 if (!frames.empty()) {
-                    frames.back().compressedData.emplace_back(data, data + length);
+                    frames.back().compressedData.push_back(
+                        {static_cast<size_t>(data - png.data()), length});
+                    frames.back().compressedSize += length;
                 }
             } else if (is_chunk(type, "fdAT")) {
                 seenImageData = true;
@@ -223,13 +273,15 @@ namespace {
                     return false;
                 }
                 // 앞의 4바이트 sequence_number를 제외하면 IDAT와 같은 데이터다.
-                frames.back().compressedData.emplace_back(data + 4, data + length);
+                frames.back().compressedData.push_back(
+                    {static_cast<size_t>(data + 4 - png.data()), length - 4});
+                frames.back().compressedSize += length - 4;
             } else if (is_chunk(type, "IEND")) {
                 break;
             } else if (!seenImageData) {
                 // PLTE/tRNS/색상 프로파일 등 프레임 디코딩에 필요한 공용 청크.
-                sharedChunks.emplace_back(png.begin() + static_cast<ptrdiff_t>(offset),
-                                          png.begin() + static_cast<ptrdiff_t>(offset + chunkSize));
+                sharedChunks.push_back({offset, chunkSize});
+                sharedChunkSize += chunkSize;
             }
 
             offset += chunkSize;
@@ -242,10 +294,16 @@ namespace {
         return haveAnimation;
     }
 
-    std::vector<uint8_t> make_frame_png(const std::array<uint8_t, 13>& sourceIhdr,
-                                        const std::vector<std::vector<uint8_t>>& sharedChunks,
+    std::vector<uint8_t> make_frame_png(const std::vector<uint8_t>& source,
+                                        const std::array<uint8_t, 13>& sourceIhdr,
+                                        const std::vector<ByteSpan>& sharedChunks,
+                                        size_t sharedChunkSize,
                                         const ApngFrame& frame) {
-        std::vector<uint8_t> png(pngSignature.begin(), pngSignature.end());
+        std::vector<uint8_t> png;
+        // signature + IHDR + 공용 청크 + 단일 IDAT + IEND
+        png.reserve(pngSignature.size() + 25 + sharedChunkSize + 12 +
+                    frame.compressedSize + 12);
+        png.insert(png.end(), pngSignature.begin(), pngSignature.end());
         std::array<uint8_t, 13> frameIhdr = sourceIhdr;
         frameIhdr[0] = static_cast<uint8_t>(frame.control.width >> 24);
         frameIhdr[1] = static_cast<uint8_t>(frame.control.width >> 16);
@@ -256,12 +314,11 @@ namespace {
         frameIhdr[6] = static_cast<uint8_t>(frame.control.height >> 8);
         frameIhdr[7] = static_cast<uint8_t>(frame.control.height);
         append_chunk(png, "IHDR", frameIhdr.data(), frameIhdr.size());
-        for (const auto& chunk : sharedChunks) {
-            png.insert(png.end(), chunk.begin(), chunk.end());
+        for (const ByteSpan& chunk : sharedChunks) {
+            png.insert(png.end(), source.begin() + static_cast<ptrdiff_t>(chunk.offset),
+                       source.begin() + static_cast<ptrdiff_t>(chunk.offset + chunk.size));
         }
-        for (const auto& data : frame.compressedData) {
-            append_chunk(png, "IDAT", data.data(), data.size());
-        }
+        append_frame_data_chunk(png, source, frame);
         append_chunk(png, "IEND", nullptr, 0);
         return png;
     }
@@ -280,21 +337,33 @@ namespace {
                          const ApngFrameControl& control,
                          const std::vector<uint8_t>& source) {
         for (uint32_t y = 0; y < control.height; ++y) {
+            const size_t srcRowOffset = static_cast<size_t>(y) * control.width * 4;
+            const size_t dstRowOffset =
+                (static_cast<size_t>(control.yOffset + y) * canvasWidth +
+                 control.xOffset) * 4;
+            if (control.blendOp == 0) { // APNG_BLEND_OP_SOURCE
+                std::memcpy(canvas.data() + dstRowOffset,
+                            source.data() + srcRowOffset,
+                            static_cast<size_t>(control.width) * 4);
+                continue;
+            }
+
             for (uint32_t x = 0; x < control.width; ++x) {
-                const size_t srcOffset = (static_cast<size_t>(y) * control.width + x) * 4;
-                const size_t dstOffset =
-                    (static_cast<size_t>(control.yOffset + y) * canvasWidth +
-                     control.xOffset + x) * 4;
+                const size_t srcOffset = srcRowOffset + static_cast<size_t>(x) * 4;
+                const size_t dstOffset = dstRowOffset + static_cast<size_t>(x) * 4;
                 const uint8_t* src = source.data() + srcOffset;
                 uint8_t* dst = canvas.data() + dstOffset;
 
-                if (control.blendOp == 0) { // APNG_BLEND_OP_SOURCE
+                const uint32_t srcAlpha = src[3];
+                if (srcAlpha == 0) {
+                    continue;
+                }
+                if (srcAlpha == 255) {
                     std::memcpy(dst, src, 4);
                     continue;
                 }
 
                 // APNG_BLEND_OP_OVER, straight-alpha RGBA 합성.
-                const uint32_t srcAlpha = src[3];
                 const uint32_t dstAlpha = dst[3];
                 const uint32_t inverseSrcAlpha = 255 - srcAlpha;
                 const uint32_t alphaNumerator =
@@ -315,12 +384,42 @@ namespace {
         }
     }
 
-    bool decode_apng(const std::vector<uint8_t>& png, DecodedImage& img) {
+    std::vector<uint8_t> copy_frame_rect(const std::vector<uint8_t>& canvas,
+                                         int canvasWidth,
+                                         const ApngFrameControl& control) {
+        const size_t rowBytes = static_cast<size_t>(control.width) * 4;
+        std::vector<uint8_t> copy(rowBytes * control.height);
+        for (uint32_t y = 0; y < control.height; ++y) {
+            const size_t srcOffset =
+                (static_cast<size_t>(control.yOffset + y) * canvasWidth +
+                 control.xOffset) * 4;
+            std::memcpy(copy.data() + static_cast<size_t>(y) * rowBytes,
+                        canvas.data() + srcOffset, rowBytes);
+        }
+        return copy;
+    }
+
+    void restore_frame_rect(std::vector<uint8_t>& canvas, int canvasWidth,
+                            const ApngFrameControl& control,
+                            const std::vector<uint8_t>& saved) {
+        const size_t rowBytes = static_cast<size_t>(control.width) * 4;
+        for (uint32_t y = 0; y < control.height; ++y) {
+            const size_t dstOffset =
+                (static_cast<size_t>(control.yOffset + y) * canvasWidth +
+                 control.xOffset) * 4;
+            std::memcpy(canvas.data() + dstOffset,
+                        saved.data() + static_cast<size_t>(y) * rowBytes, rowBytes);
+        }
+    }
+
+    bool decode_apng(const std::vector<uint8_t>& png, DecodedImage& img, bool mt) {
         std::array<uint8_t, 13> ihdr{};
-        std::vector<std::vector<uint8_t>> sharedChunks;
+        std::vector<ByteSpan> sharedChunks;
+        size_t sharedChunkSize = 0;
         std::vector<ApngFrame> frames;
         uint32_t declaredFrameCount = 0;
-        if (!parse_apng(png, ihdr, sharedChunks, frames, declaredFrameCount, img.error)) {
+        if (!parse_apng(png, ihdr, sharedChunks, sharedChunkSize, frames,
+                        declaredFrameCount, img.error)) {
             return false;
         }
 
@@ -339,41 +438,55 @@ namespace {
             return false;
         }
 
-        img.width = static_cast<int>(canvasWidth);
-        img.height = static_cast<int>(canvasHeight);
-        std::vector<uint8_t> canvas(static_cast<size_t>(canvasWidth) * canvasHeight * 4, 0);
-
         for (const ApngFrame& frame : frames) {
             const ApngFrameControl& control = frame.control;
             if (control.width == 0 || control.height == 0 ||
                 static_cast<uint64_t>(control.xOffset) + control.width > canvasWidth ||
                 static_cast<uint64_t>(control.yOffset) + control.height > canvasHeight ||
                 control.disposeOp > 2 || control.blendOp > 1 ||
-                frame.compressedData.empty()) {
+                frame.compressedData.empty() ||
+                frame.compressedSize > std::numeric_limits<uint32_t>::max()) {
                 img.error = "올바르지 않은 APNG 프레임 정보입니다";
-                img.frames.clear();
                 return false;
             }
+        }
 
-            const std::vector<uint8_t> framePng = make_frame_png(ihdr, sharedChunks, frame);
-            int frameWidth = 0;
-            int frameHeight = 0;
-            std::vector<uint8_t> framePixels;
-            if (!decode_png_rgba(framePng, frameWidth, frameHeight, framePixels, img.error) ||
-                frameWidth != static_cast<int>(control.width) ||
-                frameHeight != static_cast<int>(control.height)) {
-                if (img.error.empty()) {
-                    img.error = "APNG 프레임 크기가 올바르지 않습니다";
-                }
-                img.frames.clear();
+        auto decodeFrame = [&](size_t index) {
+            DecodedApngFrame decoded;
+            try {
+                const std::vector<uint8_t> framePng = make_frame_png(
+                    png, ihdr, sharedChunks, sharedChunkSize, frames[index]);
+                decode_png_rgba(framePng, decoded.width, decoded.height,
+                                decoded.pixels, decoded.error);
+            } catch (const std::exception& exception) {
+                decoded.error = std::string("APNG 프레임 디코딩 실패: ") + exception.what();
+            } catch (...) {
+                decoded.error = "APNG 프레임 디코딩 중 알 수 없는 오류가 발생했습니다";
+            }
+            return decoded;
+        };
+
+        img.width = static_cast<int>(canvasWidth);
+        img.height = static_cast<int>(canvasHeight);
+        std::vector<uint8_t> canvas(static_cast<size_t>(canvasWidth) * canvasHeight * 4, 0);
+        img.frames.reserve(frames.size());
+
+        auto compositeDecodedFrame = [&](size_t index, DecodedApngFrame&& decoded) {
+            const ApngFrameControl& control = frames[index].control;
+            if (!decoded.error.empty() ||
+                decoded.width != static_cast<int>(control.width) ||
+                decoded.height != static_cast<int>(control.height)) {
+                img.error = decoded.error.empty()
+                    ? "APNG 프레임 크기가 올바르지 않습니다"
+                    : decoded.error;
                 return false;
             }
 
             std::vector<uint8_t> previousCanvas;
             if (control.disposeOp == 2) { // APNG_DISPOSE_OP_PREVIOUS
-                previousCanvas = canvas;
+                previousCanvas = copy_frame_rect(canvas, img.width, control);
             }
-            composite_frame(canvas, img.width, control, framePixels);
+            composite_frame(canvas, img.width, control, decoded.pixels);
 
             ImageFrame outputFrame;
             outputFrame.pixels = canvas;
@@ -386,7 +499,111 @@ namespace {
             if (control.disposeOp == 1) { // APNG_DISPOSE_OP_BACKGROUND
                 clear_frame_rect(canvas, img.width, control);
             } else if (control.disposeOp == 2) {
-                canvas = std::move(previousCanvas);
+                restore_frame_rect(canvas, img.width, control, previousCanvas);
+            }
+            return true;
+        };
+
+        const size_t requestedWorkerCount = mt
+            ? std::min<size_t>(decoder_detail::available_thread_count(), frames.size())
+            : 1;
+        if (requestedWorkerCount <= 1) {
+            for (size_t index = 0; index < frames.size(); ++index) {
+                if (!compositeDecodedFrame(index, decodeFrame(index))) {
+                    img.frames.clear();
+                    return false;
+                }
+            }
+        } else {
+            // 디코딩 결과를 작업자 수만큼만 보관하는 bounded pipeline이다. 모든
+            // 프레임을 한꺼번에 보관할 때 생기는 큰 임시 메모리 증가를 피한다.
+            struct FrameSlot {
+                size_t index = 0;
+                int state = 0; // 0=empty, 1=decoding, 2=ready
+                DecodedApngFrame decoded;
+            };
+            std::vector<FrameSlot> slots(requestedWorkerCount);
+            std::mutex slotsMutex;
+            std::condition_variable slotsChanged;
+            size_t nextToAssign = 0;
+            bool cancelled = false;
+
+            auto workerFunction = [&]() {
+                for (;;) {
+                    size_t index = 0;
+                    {
+                        std::unique_lock lock(slotsMutex);
+                        slotsChanged.wait(lock, [&]() {
+                            return cancelled || nextToAssign >= frames.size() ||
+                                   slots[nextToAssign % slots.size()].state == 0;
+                        });
+                        if (cancelled || nextToAssign >= frames.size()) {
+                            return;
+                        }
+                        index = nextToAssign++;
+                        FrameSlot& slot = slots[index % slots.size()];
+                        slot.index = index;
+                        slot.state = 1;
+                    }
+
+                    DecodedApngFrame decoded = decodeFrame(index);
+                    {
+                        std::lock_guard lock(slotsMutex);
+                        FrameSlot& slot = slots[index % slots.size()];
+                        slot.decoded = std::move(decoded);
+                        slot.state = 2;
+                    }
+                    slotsChanged.notify_all();
+                }
+            };
+
+            std::vector<std::thread> workers;
+            workers.reserve(requestedWorkerCount);
+            for (size_t worker = 0; worker < requestedWorkerCount; ++worker) {
+                try {
+                    workers.emplace_back(workerFunction);
+                } catch (const std::exception&) {
+                    // 생성된 작업자가 하나라도 있으면 더 적은 수로 계속 처리한다.
+                    break;
+                }
+            }
+
+            if (workers.empty()) {
+                for (size_t index = 0; index < frames.size(); ++index) {
+                    if (!compositeDecodedFrame(index, decodeFrame(index))) {
+                        img.frames.clear();
+                        return false;
+                    }
+                }
+            } else {
+                bool compositionOk = true;
+                for (size_t index = 0; index < frames.size(); ++index) {
+                    DecodedApngFrame decoded;
+                    {
+                        std::unique_lock lock(slotsMutex);
+                        FrameSlot& slot = slots[index % slots.size()];
+                        slotsChanged.wait(lock, [&]() {
+                            return slot.state == 2 && slot.index == index;
+                        });
+                        decoded = std::move(slot.decoded);
+                        slot.state = 0;
+                    }
+                    slotsChanged.notify_all();
+                    if (!compositeDecodedFrame(index, std::move(decoded))) {
+                        compositionOk = false;
+                        std::lock_guard lock(slotsMutex);
+                        cancelled = true;
+                        slotsChanged.notify_all();
+                        break;
+                    }
+                }
+                for (std::thread& worker : workers) {
+                    worker.join();
+                }
+                if (!compositionOk) {
+                    img.frames.clear();
+                    return false;
+                }
             }
         }
 
@@ -396,7 +613,7 @@ namespace {
     }
 } // namespace
 
-DecodedImage decode_png(const std::string& path) {
+DecodedImage decode_png(const std::string& path, bool mt) {
     DecodedImage img;
 
     std::vector<uint8_t> png;
@@ -419,7 +636,7 @@ DecodedImage decode_png(const std::string& path) {
         offset += static_cast<size_t>(length) + 12;
     }
     if (hasActl) {
-        decode_apng(png, img);
+        decode_apng(png, img, mt);
         return img;
     }
 

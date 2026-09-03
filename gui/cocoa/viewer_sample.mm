@@ -153,7 +153,7 @@ static NSImage* DecoderThumbnail(NSString* path, int maxPixel, NSSize* outFullSi
     if (outFullSize) {
         *outFullSize = NSZeroSize;
     }
-    DecodedImage full = decode_image(path.UTF8String);
+    DecodedImage full = decode_image(path.UTF8String, true);
     if (!full.ok || full.width <= 0 || full.height <= 0) {
         return nil;
     }
@@ -723,7 +723,7 @@ static NSImage* DecodeNativeFullImage(NSString* path, NSSize* outPixelSize) {
     const std::string p(path.UTF8String);
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        auto full = std::make_shared<DecodedImage>(decode_image(p));
+        auto full = std::make_shared<DecodedImage>(decode_image(p, true));
 
         // C 라이브러리가 처리하지 못하는 포맷(HEIC/HEIF 등)은 NSImage 로 폴백
         NSImage* nativeImage = nil;
